@@ -136,6 +136,85 @@ static void PHBallSavePosition(void) {
 // 松手：夹回屏幕 → 吸附（若开）→ 收纳（若开）→ 记住位置
 
 // 按设置刷外观：形状（方/圆）+ 自定义图标
+// 切换「球 / 收纳条」形态（贴边且完全可见）
+static void PHBallSetCollapsed(BOOL collapsed) {
+    if (!g_ballHost || g_ballCollapsed == collapsed) return;
+    g_ballCollapsed = collapsed;
+    CGSize S = PHBallScreenSize();
+    CGRect f = g_ballHost.frame;
+    BOOL right = (f.origin.x + f.size.width / 2.0) > S.width / 2.0;
+    if (collapsed) {
+        f.size = CGSizeMake(PH_STRIP_W, PH_BALL_D);
+        f.origin.x = right ? (S.width - PH_STRIP_W) : 0;
+    } else {
+        f.size = CGSizeMake(PH_BALL_D, PH_BALL_D);
+        f.origin.x = right ? (S.width - PH_BALL_D) : 0;
+    }
+    g_ballHost.frame = f;
+    g_ballBody.frame = g_ballHost.bounds;
+    g_ballBody.layer.cornerRadius = collapsed ? (PH_STRIP_W / 2.0)
+                                              : (PHCfgI(@"phantom_ball_shape", 1) == 0 ? 12.0 : PH_BALL_D / 2.0);
+    g_ballIcon.hidden = collapsed;
+    g_ballHost.layer.shadowOpacity = collapsed ? 0.25 : 0.38;
+    PLog(@"ball collapsed=%d x=%.0f w=%.0f", (int)collapsed, f.origin.x, f.size.width);
+}
+
+// 松手后：先夹紧到屏幕内，再吸附最近边缘（每次执行，与是否收纳无关）
+static void PHBallSettle(void) {
+    if (!g_ballHost) return;
+    CGSize S = PHBallScreenSize();
+    BOOL attach = (PHCfgI(@"phantom_ball_attach", 0) == 0);
+    CGRect f = g_ballHost.frame;
+    f.origin.y = MAX(0, MIN(f.origin.y, S.height - f.size.height));
+    f.origin.x = MAX(0, MIN(f.origin.x, S.width - f.size.width));
+    if (attach) {
+        BOOL right = (f.origin.x + f.size.width / 2.0) > S.width / 2.0;
+        f.origin.x = right ? (S.width - f.size.width) : 0;
+    }
+    if (!CGRectEqualToRect(f, g_ballHost.frame)) {
+        [UIView animateWithDuration:0.16 animations:^{ g_ballHost.frame = f; }];
+    }
+    PHBallSavePosition();
+}
+
+// ---- 20 秒无操作 → 自动收纳成条（开了收纳也不会立刻收）----
+#define PH_IDLE_COLLAPSE_SEC 20.0
+static int g_ballIdleGen = 0;
+
+static void PHBallScheduleAutoCollapse(void) {
+    BOOL attach     = (PHCfgI(@"phantom_ball_attach", 0) == 0);
+    BOOL collapseOn = (PHCfgI(@"phantom_edge_hide", 0) == 1);
+    if (!attach || !collapseOn) return;
+    int my = ++g_ballIdleGen;
+    PLog(@"auto-collapse timer armed (%ds)", (int)PH_IDLE_COLLAPSE_SEC);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(PH_IDLE_COLLAPSE_SEC * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (my != g_ballIdleGen) return;
+        if (g_ballCollapsed) return;
+        PLog(@"idle %ds → auto collapse", (int)PH_IDLE_COLLAPSE_SEC);
+        PHBallSetCollapsed(YES);
+        PHBallSavePosition();
+    });
+}
+
+// 任何操作（按球/拖球/开关面板）→ 立即展开 + 重新计时
+static void PHBallActivity(void) {
+    if (g_ballCollapsed) PHBallSetCollapsed(NO);
+    PHBallScheduleAutoCollapse();
+}
+
+void PHBallNotifyActivity(void) { PHBallActivity(); }
+
+void PHBallApplyLayout(void) {
+    PHBallRestyle();
+    PHBallSettle();
+    if (PHCfgI(@"phantom_edge_hide", 0) == 1) {
+        PHBallScheduleAutoCollapse();
+    } else if (g_ballCollapsed) {
+        PHBallSetCollapsed(NO);
+    }
+}
+
 static void PHBallRestyle(void) {
     if (!g_ballBody) return;
     NSInteger shape = PHCfgI(@"phantom_ball_shape", 1);
