@@ -748,17 +748,24 @@ void PHShowActionEdit(NSInteger index) {
 + (void)onScripts  { PHShowScripts(); }
 + (void)onBallShape:(UISegmentedControl *)s {
     [[NSUserDefaults standardUserDefaults] setInteger:s.selectedSegmentIndex forKey:@"phantom_ball_shape"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    PHBallApplyLayout();
     PHToast(s.selectedSegmentIndex ? @"悬浮球：圆形" : @"悬浮球：方形");
 }
 + (void)onBallAttach:(UISegmentedControl *)s {
     [[NSUserDefaults standardUserDefaults] setInteger:s.selectedSegmentIndex forKey:@"phantom_ball_attach"];
-    PHToast(s.selectedSegmentIndex ? @"悬浮球：不吸附" : @"悬浮球：吸附边缘");
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    PHBallApplyLayout();
+    PHToast(s.selectedSegmentIndex ? @"悬浮球：不吸附（可停在任意位置）" : @"悬浮球：吸附边缘");
 }
 + (void)onEdgeHide:(UISegmentedControl *)s {
     [[NSUserDefaults standardUserDefaults] setInteger:s.selectedSegmentIndex forKey:@"phantom_edge_hide"];
-    PHToast(s.selectedSegmentIndex ? @"边缘收纳：开" : @"边缘收纳：关");
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    PHBallApplyLayout();
+    PHToast(s.selectedSegmentIndex ? @"边缘收纳：开（球会藏一半到屏幕边）" : @"边缘收纳：关");
 }
-+ (void)onIcon     { PHToast(@"自定义悬浮图标将在后续阶段接入"); }
++ (void)onIcon     { PHShowIconPicker(); }
++ (void)onIconReset { PHResetBallIcon(); }
 + (void)onTrackShow:(UISegmentedControl *)s {
     [[NSUserDefaults standardUserDefaults] setInteger:s.selectedSegmentIndex forKey:@"phantom_track_show"];
     PHToast(s.selectedSegmentIndex ? @"触摸轨迹显示：开" : @"触摸轨迹显示：关");
@@ -824,6 +831,8 @@ void PHShowSettings(void) {
 
     PHPanelSection(@"悬浮球图标");
     PHPanelAdd(PHFieldRow(@"设置自定义悬浮图标", g_pW, [PHSettingsActions class], @selector(onIcon)), 0);
+    PHPanelAdd(PHFieldRow(@"恢复默认图标", g_pW, [PHSettingsActions class], @selector(onIconReset)), 8);
+    PHPanelNote(@"提示：悬浮球可直接用手指拖动；松手后按上面的「吸附 / 边缘收纳」设置归位，位置会被记住。");
 
     PHPanelSection(@"触摸轨迹显示");
     UISegmentedControl *ts = PHSegmented(@[ @"关", @"开" ], PHCfgInt(@"phantom_track_show"), g_pW);

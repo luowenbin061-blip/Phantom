@@ -3,7 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
-#define PH_VERSION @"0.3"   // 幻影版本（UI 骨架 + 主面板重做）
+#define PH_VERSION @"0.4"   // 幻影版本（悬浮球可拖动/换形状/换图标）
 
 #pragma mark - 主题
 #define PH_BG      [UIColor colorWithRed:0.173 green:0.173 blue:0.180 alpha:0.95]   // #2C2C2E 面板底
@@ -107,3 +107,7 @@ void PHShowScripts(void);
 void PHToast(NSString *text);              // 顶部轻提示
 void PHRefreshMenuIfVisible(void);
 BOOL PHIsPanelOpen(void);          // 当前是否有面板在显示（自测用）
+void PHRefreshBall(void);                      // 按当前设置重建悬浮球（形状/图标）
+void PHBallApplyLayout(void);                  // 设置变更后立即应用（形状+吸附）
+void PHShowIconPicker(void);                   // 打开相册选悬浮球图标
+void PHResetBallIcon(void);                    // 恢复默认图标

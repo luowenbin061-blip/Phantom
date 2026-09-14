@@ -17,6 +17,7 @@
 #import "PH.h"
 
 static void PHShowLogPanel(void);
+static void phCreateBall(void);
 
 #pragma mark - 日志
 
@@ -95,19 +96,143 @@ static void phTapStrategy(int strategy, CGPoint ptNorm, NSString *tag) {
     });
 }
 
-#pragma mark - 悬浮球
+#pragma mark - 悬浮球（可拖动 / 形状 / 吸附 / 边缘收纳 / 自定义图标）
 
-static UIWindow *g_ballWin = nil;
+static UIWindow        *g_ballWin = nil;
+static UIView          *g_ballBody = nil;
+static UIImageView     *g_ballIcon = nil;
+static UIControl       *g_ballCtl = nil;
 
-@interface PHBallActions : NSObject
-+ (void)onTap;
-+ (void)onLong;
+#define PH_BALL_SIZE 46.0
+#define PH_BALL_PAD  9.0
+
+static NSInteger PHCfgI(NSString *key, NSInteger def) {
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    return [ud objectForKey:key] == nil ? def : [ud integerForKey:key];
+}
+
+static CGSize PHBallScreenSize(void) {
+    if (g_ballWin.windowScene) return g_ballWin.windowScene.screen.bounds.size;
+    return [UIScreen mainScreen].bounds.size;
+}
+
+static void PHBallSavePosition(void) {
+    if (!g_ballWin) return;
+    CGSize S = PHBallScreenSize();
+    if (S.width <= 0 || S.height <= 0) return;
+    CGRect f = g_ballWin.frame;
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    [ud setDouble:f.origin.x / S.width forKey:@"phantom_ball_x"];
+    [ud setDouble:f.origin.y / S.height forKey:@"phantom_ball_y"];
+    [ud synchronize];
+    PLog(@"ball pos saved (%.0f,%.0f) → ratio (%.3f,%.3f)", f.origin.x, f.origin.y,
+         f.origin.x / S.width, f.origin.y / S.height);
+}
+
+// 松手：夹回屏幕内 → 吸附（若开启）→ 边缘收纳（若开启）→ 记住位置
+static void PHBallSettle(void) {
+    if (!g_ballWin) return;
+    CGSize S = PHBallScreenSize();
+    BOOL attach   = (PHCfgI(@"phantom_ball_attach", 0) == 0);   // 0=吸附
+    BOOL edgeHide = (PHCfgI(@"phantom_edge_hide", 0) == 1);
+    CGRect f = g_ballWin.frame;
+    f.origin.y = MAX(-PH_BALL_PAD, MIN(f.origin.y, S.height - f.size.height));
+    CGFloat hide = edgeHide ? PH_BALL_SIZE * 0.45 : 0;
+    if (attach) {
+        BOOL right = (f.origin.x + f.size.width / 2.0) > S.width / 2.0;
+        f.origin.x = right ? (S.width - f.size.width + hide) : -hide;
+    } else {
+        f.origin.x = MAX(-PH_BALL_PAD, MIN(f.origin.x, S.width - f.size.width + PH_BALL_PAD));
+    }
+    if (!CGRectEqualToRect(f, g_ballWin.frame)) {
+        [UIView animateWithDuration:0.18 animations:^{ g_ballWin.frame = f; }];
+    }
+    PHBallSavePosition();
+}
+
+// 按设置刷外观：形状（方/圆）+ 自定义图标
+static void PHBallRestyle(void) {
+    if (!g_ballBody) return;
+    NSInteger shape = PHCfgI(@"phantom_ball_shape", 1);          // 0=方 1=圆
+    g_ballBody.layer.cornerRadius = (shape == 0) ? 12.0 : PH_BALL_SIZE / 2.0;
+
+    NSString *iconName = [[NSUserDefaults standardUserDefaults] stringForKey:@"phantom_ball_icon"];
+    UIImage *custom = nil;
+    if (iconName.length) {
+        NSString *doc = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+        custom = [UIImage imageWithContentsOfFile:[doc stringByAppendingPathComponent:iconName]];
+    }
+    if (custom) {
+        g_ballIcon.image = custom;
+        g_ballIcon.contentMode = UIViewContentModeScaleAspectFill;
+        g_ballIcon.frame = g_ballBody.bounds;
+    } else {
+        g_ballIcon.image = PHIcon(@"hand.tap.fill", 21, [UIColor colorWithWhite:1.0 alpha:0.95]);
+        g_ballIcon.contentMode = UIViewContentModeScaleAspectFit;
+        g_ballIcon.frame = CGRectMake((PH_BALL_SIZE - 24) / 2.0, (PH_BALL_SIZE - 24) / 2.0, 24, 24);
+    }
+    PLog(@"ball restyle: shape=%ld icon=%@", (long)shape, custom ? @"自定义" : @"默认");
+}
+
+@interface PHBallControl : UIControl
+@property (nonatomic) CGPoint startTouch;
+@property (nonatomic) CGPoint startOrigin;
+@property (nonatomic) BOOL moved;
+@property (nonatomic) BOOL longFired;
 @end
 
-@implementation PHBallActions
-+ (void)onTap  { PHShowMenu(); }
-+ (void)onLong { PHShowLogPanel(); }
+@implementation PHBallControl
+
+- (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
+    self.startTouch = [touch locationInView:nil];
+    self.startOrigin = self.window.frame.origin;
+    self.moved = NO;
+    self.longFired = NO;
+    self.alpha = 0.78;
+    PHBallControl *me = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.9 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (!me.moved && me.isTracking) { me.longFired = YES; PHShowLogPanel(); }
+    });
+    return YES;
+}
+
+- (BOOL)continueTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
+    CGPoint pt = [touch locationInView:nil];
+    CGFloat dx = pt.x - self.startTouch.x, dy = pt.y - self.startTouch.y;
+    if (!self.moved && (fabs(dx) > 5 || fabs(dy) > 5)) self.moved = YES;
+    if (!self.moved) return YES;
+    CGRect f = self.window.frame;
+    f.origin = CGPointMake(self.startOrigin.x + dx, self.startOrigin.y + dy);
+    self.window.frame = f;       // 球跟着手指走
+    return YES;
+}
+
+- (void)endTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
+    self.alpha = 1.0;
+    if (self.moved) PHBallSettle();
+    else if (!self.longFired) PHShowMenu();
+}
+
+- (void)cancelTrackingWithEvent:(UIEvent *)event {
+    self.alpha = 1.0;
+    if (self.moved) PHBallSettle();
+}
+
 @end
+
+void PHRefreshBall(void) {
+    if (g_ballWin) {
+        g_ballWin.hidden = YES;
+        g_ballWin = nil; g_ballBody = nil; g_ballIcon = nil; g_ballCtl = nil;
+    }
+    phCreateBall();
+}
+
+void PHBallApplyLayout(void) {
+    PHBallRestyle();
+    PHBallSettle();
+}
 
 static void phCreateBall(void) {
     if (g_ballWin) return;
@@ -119,19 +244,19 @@ static void phCreateBall(void) {
     if (!scene) { PLog(@"ball: no scene"); return; }
     CGSize S = scene.screen.bounds.size;
 
-    CGFloat ballSize = 46.0;
-    CGFloat pad = 9.0;                       // 给投影留边
-    CGFloat winSize = ballSize + pad * 2;
+    CGFloat winSize = PH_BALL_SIZE + PH_BALL_PAD * 2;
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    CGFloat rx = [ud objectForKey:@"phantom_ball_x"] ? [ud doubleForKey:@"phantom_ball_x"] : 0.012;
+    CGFloat ry = [ud objectForKey:@"phantom_ball_y"] ? [ud doubleForKey:@"phantom_ball_y"] : 0.19;
 
     UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
-    w.frame = CGRectMake(6, S.height * 0.19, winSize, winSize);
+    w.frame = CGRectMake(rx * S.width, ry * S.height, winSize, winSize);
     w.windowLevel = UIWindowLevelAlert + 90;
     w.backgroundColor = [UIColor clearColor];
     w.userInteractionEnabled = YES;
     g_ballWin = w;
 
-    // 外圈：只做投影
-    UIView *host = [[UIView alloc] initWithFrame:CGRectMake(pad, pad, ballSize, ballSize)];
+    UIView *host = [[UIView alloc] initWithFrame:CGRectMake(PH_BALL_PAD, PH_BALL_PAD, PH_BALL_SIZE, PH_BALL_SIZE)];
     host.backgroundColor = [UIColor clearColor];
     host.layer.shadowColor = [UIColor blackColor].CGColor;
     host.layer.shadowOpacity = 0.38;
@@ -139,36 +264,100 @@ static void phCreateBall(void) {
     host.layer.shadowOffset = CGSizeMake(0, 2);
     [w addSubview:host];
 
-    // 球体：毛玻璃 + 细白边
     UIView *ball = [[UIView alloc] initWithFrame:host.bounds];
-    ball.layer.cornerRadius = ballSize / 2.0;
     ball.clipsToBounds = YES;
+    ball.layer.cornerRadius = PH_BALL_SIZE / 2.0;
     ball.layer.borderWidth = 1.0;
     ball.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.22].CGColor;
     [host addSubview:ball];
+    g_ballBody = ball;
 
     UIVisualEffectView *blur = [[UIVisualEffectView alloc]
         initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
     blur.frame = ball.bounds;
     [ball addSubview:blur];
 
-    // 图标（连点手势）
-    UIImageView *icon = [[UIImageView alloc] initWithImage:PHIcon(@"hand.tap.fill", 21, [UIColor colorWithWhite:1.0 alpha:0.95])];
-    icon.frame = CGRectMake((ballSize - 24) / 2.0, (ballSize - 24) / 2.0, 24, 24);
+    UIImageView *icon = [[UIImageView alloc] init];
     [ball addSubview:icon];
+    g_ballIcon = icon;
 
-    // 点击层
-    UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
-    b.frame = ball.bounds;
-    b.backgroundColor = [UIColor clearColor];
-    [b addTarget:[PHBallActions class] action:@selector(onTap) forControlEvents:UIControlEventTouchUpInside];
-    [b addTarget:[PHBallActions class] action:@selector(onLong)
-forControlEvents:UIControlEventTouchDownRepeat];
-    [ball addSubview:b];
+    PHBallControl *ctl = [[PHBallControl alloc] initWithFrame:ball.bounds];
+    ctl.backgroundColor = [UIColor clearColor];
+    [ball addSubview:ctl];
+    g_ballCtl = ctl;
 
     w.hidden = NO;
-    PLog(@"phantom ball created at (%.0f, %.0f) 直径%.0f（毛玻璃圆球）",
-         w.frame.origin.x, w.frame.origin.y, ballSize);
+    PHBallRestyle();
+    PLog(@"phantom ball created at (%.0f,%.0f) 直径%.0f 形状=%ld（毛玻璃圆球·可拖动）",
+         w.frame.origin.x, w.frame.origin.y, PH_BALL_SIZE, (long)PHCfgI(@"phantom_ball_shape", 1));
+}
+
+#pragma mark - 悬浮球图标（相册选图）
+
+static id g_iconPickerDelegate = nil;
+
+@interface PHIconPickerDelegate : NSObject <UIImagePickerControllerDelegate, UINavigationControllerDelegate>
+@end
+
+@implementation PHIconPickerDelegate
+
+- (void)imagePickerController:(UIImagePickerController *)picker
+didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> *)info {
+    UIImage *img = info[UIImagePickerControllerEditedImage] ?: info[UIImagePickerControllerOriginalImage];
+    [picker dismissViewControllerAnimated:YES completion:^{
+        if (!img) return;
+        NSString *doc = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+        NSString *path = [doc stringByAppendingPathComponent:@"ball_icon.png"];
+        if ([UIImagePNGRepresentation(img) writeToFile:path atomically:YES]) {
+            [[NSUserDefaults standardUserDefaults] setObject:@"ball_icon.png" forKey:@"phantom_ball_icon"];
+            [[NSUserDefaults standardUserDefaults] synchronize];
+            PLog(@"ball icon saved: %@", path);
+            PHRefreshBall();
+            PHToast(@"悬浮球图标已更新");
+        } else {
+            PHToast(@"图标保存失败");
+        }
+    }];
+}
+
+- (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
+    [picker dismissViewControllerAnimated:YES completion:nil];
+}
+
+@end
+
+void PHShowIconPicker(void) {
+    UIWindowScene *scene = nil;
+    for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
+        if ([sc isKindOfClass:[UIWindowScene class]] &&
+            sc.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)sc; break; }
+    }
+    if (!scene) { PHToast(@"没有可用窗口"); return; }
+    // present 必须在真正的宿主窗口上（我们的浮层不是 key window）
+    UIWindow *host = scene.keyWindow;
+    if (!host) {
+        for (UIWindow *w in scene.windows) {
+            if (w != g_ballWin && w.rootViewController) { host = w; break; }
+        }
+    }
+    UIViewController *root = host.rootViewController;
+    if (!root) { PHToast(@"宿主窗口没有控制器，无法打开相册"); return; }
+    if (!g_iconPickerDelegate) g_iconPickerDelegate = [[PHIconPickerDelegate alloc] init];
+
+    UIImagePickerController *picker = [[UIImagePickerController alloc] init];
+    picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
+    picker.allowsEditing = YES;
+    picker.delegate = (PHIconPickerDelegate *)g_iconPickerDelegate;
+    [root presentViewController:picker animated:YES completion:nil];
+    PLog(@"icon picker presented on %@", NSStringFromClass([root class]));
+}
+
+void PHResetBallIcon(void) {
+    NSString *doc = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    [[NSFileManager defaultManager] removeItemAtPath:[doc stringByAppendingPathComponent:@"ball_icon.png"] error:nil];
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"phantom_ball_icon"];
+    PHRefreshBall();
+    PHToast(@"已恢复默认图标");
 }
 
 #pragma mark - 日志面板（长按球打开）
@@ -286,6 +475,24 @@ static void phSelftest(void) {
         if (ev) CFRelease(ev);
     }
     PH_CHECK(g_ballWin != nil, @"悬浮球已创建");
+
+    // v0.4：悬浮球行为（拖动保存 / 形状 / 图标复位 / 重建）
+    NSUserDefaults *udB = [NSUserDefaults standardUserDefaults];
+    CGRect bf = g_ballWin.frame;
+    g_ballWin.frame = CGRectMake(120, 300, bf.size.width, bf.size.height);
+    PHBallSavePosition();
+    PH_CHECK([udB objectForKey:@"phantom_ball_x"] != nil, @"悬浮球位置可保存");
+    [udB setInteger:0 forKey:@"phantom_ball_shape"];
+    PHBallRestyle();
+    PH_CHECK(fabs(g_ballBody.layer.cornerRadius - 12.0) < 0.01, @"形状切方形生效");
+    [udB setInteger:1 forKey:@"phantom_ball_shape"];
+    PHBallRestyle();
+    PH_CHECK(fabs(g_ballBody.layer.cornerRadius - PH_BALL_SIZE / 2.0) < 0.01, @"形状切圆形生效");
+    [udB setObject:@"ball_icon.png" forKey:@"phantom_ball_icon"];
+    PHResetBallIcon();
+    PH_CHECK([udB objectForKey:@"phantom_ball_icon"] == nil, @"恢复默认图标生效");
+    PHRefreshBall();
+    PH_CHECK(g_ballWin != nil && g_ballCtl != nil, @"悬浮球可按设置重建（带拖动控件）");
 
     // 合成点击调用链（模拟器里 dispatch 无真实效果，但要确保不崩）
     if (g_iokitReady) {
