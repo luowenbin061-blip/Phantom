@@ -3,7 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
-#define PH_VERSION @"0.4"   // 幻影版本（悬浮球可拖动/换形状/换图标）
+#define PH_VERSION @"0.5"   // 幻影版本（跟手拖动/收纳条/毛玻璃小卡片）
 
 #pragma mark - 主题
 #define PH_BG      [UIColor colorWithRed:0.173 green:0.173 blue:0.180 alpha:0.95]   // #2C2C2E 面板底
@@ -22,10 +22,10 @@
 #define PH_BTN_RUN     [UIColor colorWithRed:0.24 green:0.84 blue:0.36 alpha:1.0]   // 绿 ▶
 #define PH_BAR         [UIColor colorWithRed:0.12 green:0.12 blue:0.13 alpha:1.0]   // 底部按钮栏底
 
-extern const CGFloat PH_PANEL_RADIUS;    // 18
-extern const CGFloat PH_ROW_H;           // 44
+extern const CGFloat PH_PANEL_RADIUS;    // 16
+extern const CGFloat PH_ROW_H;           // 40
 extern const CGFloat PH_TITLE_H;         // 50
-extern const CGFloat PH_PANEL_W_RATIO;   // 0.66 面板宽 = 屏宽×比例
+extern const CGFloat PH_PANEL_W_RATIO;   // 0.62 面板宽 = 屏宽×比例
 
 #pragma mark - 控件工厂（PHTheme.m）
 UILabel *PHLabel(NSString *text, CGFloat size, UIColor *color, BOOL bold);

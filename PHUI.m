@@ -54,7 +54,7 @@ static void PHPanelBegin(NSString *title, CGFloat wRatio, BOOL tall) {
     UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
     w.frame = CGRectMake(0, 0, S.width, S.height);
     w.windowLevel = UIWindowLevelAlert + 95;
-    w.backgroundColor = [UIColor colorWithWhite:0 alpha:0.32];
+    w.backgroundColor = [UIColor clearColor];     // 不压暗底层（老贝贝就是不遮的）
     w.userInteractionEnabled = YES;
     g_pWin = w;
 
@@ -64,7 +64,7 @@ static void PHPanelBegin(NSString *title, CGFloat wRatio, BOOL tall) {
     [w addSubview:mask];
 
     CGFloat pw = round(S.width * (wRatio > 0 ? wRatio : PH_PANEL_W_RATIO));
-    CGFloat ph = tall ? S.height * 0.78 : 0;   // 0 = 先占位，之后按内容算
+    CGFloat ph = tall ? S.height * 0.70 : 0;   // 0 = 先占位，之后按内容算
     UIView *card = PHCardView(CGRectMake((S.width - pw) / 2.0, 0, pw, ph ? ph : 200));
     [w addSubview:card];
     g_pCard = card;
@@ -131,9 +131,15 @@ static void PHPanelButtons(NSArray<UIButton *> *btns) {
     g_pY = by + PH_ROW_H;
 
     CGFloat ph = 12 + g_pY + 16;
+    CGFloat scrollH = g_pY - 12 - PH_ROW_H - 12;
+    CGFloat maxH = g_pWin.bounds.size.height * 0.74;
+    if (ph > maxH) {                       // 内容太高 → 夹住面板，滚动区吃掉差额
+        scrollH -= (ph - maxH);
+        ph = maxH;
+    }
     CGRect cf = g_pCard.frame;
     g_pCard.frame = CGRectMake(cf.origin.x, (g_pWin.bounds.size.height - ph) / 2.0, cf.size.width, ph);
-    g_pScroll.frame = CGRectMake(16, PH_TITLE_H + 12, g_pW, g_pY - 12 - PH_ROW_H - 12);
+    g_pScroll.frame = CGRectMake(16, PH_TITLE_H + 12, g_pW, MAX(90.0, scrollH));
     g_pScroll.contentSize = CGSizeMake(g_pW, g_pY - 12 - PH_ROW_H - 12);
 }
 
@@ -175,7 +181,7 @@ static void PHInputCard(NSString *title, NSString *hint, NSString *current, void
     UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
     w.frame = CGRectMake(0, 0, S.width, S.height);
     w.windowLevel = UIWindowLevelAlert + 101;
-    w.backgroundColor = [UIColor colorWithWhite:0 alpha:0.32];
+    w.backgroundColor = [UIColor clearColor];
     w.userInteractionEnabled = YES;
     g_iWin = w;
 
@@ -300,33 +306,33 @@ void PHCloseMenu(void) {
 // 一张动作小卡片
 static UIButton *PHActionCard(PHAction *a, NSInteger idx, CGFloat w, BOOL deleteMode) {
     UIButton *card = [UIButton buttonWithType:UIButtonTypeCustom];
-    card.frame = CGRectMake(0, 0, w, 58);
-    card.backgroundColor = [UIColor colorWithRed:0.165 green:0.165 blue:0.175 alpha:1.0];
-    card.layer.cornerRadius = 12;
+    card.frame = CGRectMake(0, 0, w, 46);
+    card.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.08];   // 半透明，透出毛玻璃
+    card.layer.cornerRadius = 10;
     card.tag = idx;
     [card addTarget:[PHMenuActions class]
              action:(deleteMode ? @selector(onDelCard:) : @selector(onCard:))
    forControlEvents:UIControlEventTouchUpInside];
 
-    UIImageView *icon = [[UIImageView alloc] initWithImage:PHIcon([PHAction typeSymbol:a.type], 19, PH_ACCENT)];
-    icon.frame = CGRectMake(14, 19, 20, 20);
+    UIImageView *icon = [[UIImageView alloc] initWithImage:PHIcon([PHAction typeSymbol:a.type], 16, PH_ACCENT)];
+    icon.frame = CGRectMake(11, 15, 17, 17);
     icon.userInteractionEnabled = NO;
     [card addSubview:icon];
 
-    UILabel *n = PHLabel([NSString stringWithFormat:@"%ld. %@", (long)(idx + 1), [PHAction typeName:a.type]], 15, PH_TEXT, YES);
-    n.frame = CGRectMake(44, 9, w - 44 - 46, 20);
+    UILabel *n = PHLabel([NSString stringWithFormat:@"%ld. %@", (long)(idx + 1), [PHAction typeName:a.type]], 14, PH_TEXT, YES);
+    n.frame = CGRectMake(36, 6, w - 36 - 40, 18);
     n.userInteractionEnabled = NO;
     [card addSubview:n];
 
-    UILabel *sm = PHLabel(a.summary, 12, PH_DIM, NO);
-    sm.frame = CGRectMake(44, 30, w - 44 - 46, 16);
+    UILabel *sm = PHLabel(a.summary, 11, PH_DIM, NO);
+    sm.frame = CGRectMake(36, 24, w - 36 - 40, 14);
     sm.lineBreakMode = NSLineBreakByTruncatingTail;
     sm.userInteractionEnabled = NO;
     [card addSubview:sm];
 
     UIImageView *tail = [[UIImageView alloc] initWithImage:PHIcon(deleteMode ? @"minus.circle.fill" : @"chevron.right",
-                                                                  18, deleteMode ? PH_BTN_DEL : PH_FAINT)];
-    tail.frame = CGRectMake(w - 34, 20, 18, 18);
+                                                                  15, deleteMode ? PH_BTN_DEL : PH_FAINT)];
+    tail.frame = CGRectMake(w - 28, 16, 15, 15);
     tail.userInteractionEnabled = NO;
     [card addSubview:tail];
     return card;
@@ -339,19 +345,19 @@ static void PHBuildMenuList(BOOL deleteMode) {
     NSMutableArray<PHAction *> *list = PHActions();
     CGFloat h = 0;
     if (!list.count) {
-        UILabel *l = PHLabel(@"还没有动作\n点下方蓝色 ＋ 添加", 14, PH_DIM, NO);
+        UILabel *l = PHLabel(@"还没有动作\n点下方蓝色 ＋ 添加", 13, PH_DIM, NO);
         l.textAlignment = NSTextAlignmentCenter;
         l.numberOfLines = 2;
-        l.frame = CGRectMake(0, 34, w, 56);
+        l.frame = CGRectMake(0, 26, w, 50);
         [g_mListHost addSubview:l];
-        h = 124;
+        h = 100;
     } else {
         NSInteger i = 0;
         for (PHAction *a in list) {
             UIButton *card = PHActionCard(a, i, w, deleteMode);
-            card.frame = CGRectMake(0, h, w, 58);
+            card.frame = CGRectMake(0, h, w, 46);
             [g_mListHost addSubview:card];
-            h += 64;
+            h += 52;
             i++;
         }
         h = MAX(h, 124);
@@ -384,27 +390,24 @@ static void PHBuildMenuWindow(BOOL deleteMode) {
    forControlEvents:UIControlEventTouchUpInside];
     [w addSubview:mask];
 
-    CGFloat pw = round(S.width * 0.88);
-    CGFloat hdrH = 54, barH = 80;
+    CGFloat pw = round(S.width * 0.60);
+    CGFloat hdrH = 46, barH = 64;
     CGFloat listMax = S.height * 0.62;
     (void)listMax;
     // 先按内容估高，再定最大
     CGFloat contentH = 0;
-    if (PHActions().count) contentH = PHActions().count * 64;
-    else contentH = 124;
-    CGFloat listH = MIN(contentH, S.height * 0.60);
+    if (PHActions().count) contentH = PHActions().count * 54;
+    else contentH = 108;
+    CGFloat listH = MIN(contentH, S.height * 0.34);
     CGFloat ph = hdrH + listH + barH;
 
-    UIView *card = [[UIView alloc] initWithFrame:CGRectMake((S.width - pw) / 2.0, (S.height - ph) / 2.0, pw, ph)];
-    card.backgroundColor = [UIColor colorWithRed:0.086 green:0.086 blue:0.094 alpha:0.98];
-    card.layer.cornerRadius = 18;
-    card.clipsToBounds = YES;
+    UIView *card = PHCardView(CGRectMake((S.width - pw) / 2.0, (S.height - ph) / 2.0, pw, ph));
     [w addSubview:card];
     g_mCard = card;
     g_mW = pw - 24;
 
     // 标题（青色）+ 右上白色圆 ✕
-    UILabel *t = PHLabel([NSString stringWithFormat:@"幻影 Phantom v%@", PH_VERSION], 17, PH_TITLE_GREEN, YES);
+    UILabel *t = PHLabel([NSString stringWithFormat:@"幻影 Phantom v%@", PH_VERSION], 16, PH_TITLE_GREEN, YES);
     t.frame = CGRectMake(18, 0, pw - 18 - 52, hdrH);
     [card addSubview:t];
     UIButton *cl = PHCloseButton(30);
@@ -427,7 +430,7 @@ static void PHBuildMenuWindow(BOOL deleteMode) {
     bar.backgroundColor = PH_BAR;
     [card addSubview:bar];
 
-    CGFloat bsz = 50;
+    CGFloat bsz = 42;
     CGFloat gap = (pw - 4 * bsz) / 5.0;
     NSArray *symbols = @[ @"plus", @"minus", @"ellipsis", @"play.fill" ];
     NSArray *colors  = @[ PH_BTN_ADD, PH_BTN_DEL, PH_BTN_SET, PH_BTN_RUN ];
@@ -482,23 +485,23 @@ void PHRefreshMenuIfVisible(void) {
 @end
 
 void PHShowAddAction(void) {
-    PHPanelBegin(@"添加动作", 0.74, YES);
+    PHPanelBegin(@"添加动作", 0.66, YES);
     CGFloat y = 0;
     for (NSInteger i = 0; i < 9; i++) {
         PHActionType t = (PHActionType)i;
-        UIView *row = [[UIView alloc] initWithFrame:CGRectMake(0, y, g_pW, 56)];
-        row.backgroundColor = PH_FIELD;
-        row.layer.cornerRadius = 10;
+        UIView *row = [[UIView alloc] initWithFrame:CGRectMake(0, y, g_pW, 48)];
+        row.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.08];
+        row.layer.cornerRadius = 9;
 
-        UIImageView *icon = [[UIImageView alloc] initWithImage:PHIcon([PHAction typeSymbol:t], 20, PH_ACCENT)];
-        icon.frame = CGRectMake(14, 18, 22, 22);
+        UIImageView *icon = [[UIImageView alloc] initWithImage:PHIcon([PHAction typeSymbol:t], 17, PH_ACCENT)];
+        icon.frame = CGRectMake(12, 15, 19, 19);
         [row addSubview:icon];
 
-        UILabel *n = PHLabel([PHAction typeName:t], 15, PH_TEXT, YES);
-        n.frame = CGRectMake(46, 8, g_pW - 46 - 40, 20);
+        UILabel *n = PHLabel([PHAction typeName:t], 14, PH_TEXT, YES);
+        n.frame = CGRectMake(40, 6, g_pW - 40 - 36, 18);
         [row addSubview:n];
-        UILabel *d = PHLabel([PHAction typeDesc:t], 12, PH_DIM, NO);
-        d.frame = CGRectMake(46, 28, g_pW - 46 - 40, 16);
+        UILabel *d = PHLabel([PHAction typeDesc:t], 11, PH_DIM, NO);
+        d.frame = CGRectMake(40, 25, g_pW - 40 - 36, 14);
         [row addSubview:d];
 
         UIButton *hit = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -509,7 +512,7 @@ void PHShowAddAction(void) {
         [row addSubview:hit];
 
         [g_pScroll addSubview:row];
-        y += 60;
+        y += 52;
     }
     g_pY = y;
     UIButton *cancel = PHFootButton(@"取消", NO, g_pW);
@@ -611,7 +614,7 @@ void PHShowActionEdit(NSInteger index) {
     if (index < 0 || index >= (NSInteger)PHActions().count) { PHShowMenu(); return; }
     g_editIndex = index;
     PHAction *a = [PHActions() objectAtIndex:(NSUInteger)index];
-    PHPanelBegin([NSString stringWithFormat:@"%@动作编辑", [PHAction typeName:a.type]], 0.74, YES);
+    PHPanelBegin([NSString stringWithFormat:@"%@动作编辑", [PHAction typeName:a.type]], 0.68, YES);
 
     PHPanelSection(@"动作描述");
     PHPanelAdd(PHFieldRow(a.desc.length ? a.desc : @"点击输入动作描述", g_pW,
@@ -798,7 +801,7 @@ static NSInteger PHCfgInt(NSString *key) {
 }
 
 void PHShowSettings(void) {
-    PHPanelBegin(@"设置", 0.66, YES);
+    PHPanelBegin(@"设置", 0.62, YES);
 
     PHPanelSection(@"整体执行设置");
     PHPanelAdd(PHFieldRow([NSString stringWithFormat:@"执行次数：%@（0=无限）",
@@ -889,7 +892,7 @@ void PHShowSettings(void) {
 @end
 
 void PHShowScripts(void) {
-    PHPanelBegin(@"脚本文件管理", 0.74, NO);
+    PHPanelBegin(@"脚本文件管理", 0.66, NO);
     PHPanelNote(@"当前为「单配置 + 自动保存」模式：退出 App 前会自动存到沙盒。");
     PHPanelSection(@"当前配置");
     PHPanelAdd(PHFieldRowPlain([NSString stringWithFormat:@"phantom_tasks.json · %lu 个动作",

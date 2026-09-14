@@ -5,10 +5,10 @@
 
 #import "PH.h"
 
-const CGFloat PH_PANEL_RADIUS  = 18.0;
-const CGFloat PH_ROW_H         = 44.0;
-const CGFloat PH_TITLE_H       = 50.0;
-const CGFloat PH_PANEL_W_RATIO = 0.66;
+const CGFloat PH_PANEL_RADIUS  = 16.0;
+const CGFloat PH_ROW_H         = 40.0;
+const CGFloat PH_TITLE_H       = 46.0;
+const CGFloat PH_PANEL_W_RATIO = 0.62;
 
 UILabel *PHLabel(NSString *text, CGFloat size, UIColor *color, BOOL bold) {
     UILabel *l = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -23,12 +23,12 @@ UIView *PHFieldRow(NSString *value, CGFloat w, id target, SEL action) {
     UIButton *row = [UIButton buttonWithType:UIButtonTypeCustom];
     row.frame = CGRectMake(0, 0, w, PH_ROW_H);
     row.backgroundColor = PH_FIELD;
-    row.layer.cornerRadius = 10;
+    row.layer.cornerRadius = 9;
     if (target && action) {
         [row addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
     }
-    UILabel *v = PHLabel(value, 15, PH_TEXT, NO);
-    v.frame = CGRectMake(14, 0, w - 14 - 30, PH_ROW_H);
+    UILabel *v = PHLabel(value, 14, PH_TEXT, NO);
+    v.frame = CGRectMake(13, 0, w - 13 - 28, PH_ROW_H);
     v.lineBreakMode = NSLineBreakByTruncatingHead;
     v.userInteractionEnabled = NO;
     [row addSubview:v];
@@ -45,8 +45,8 @@ UIView *PHFieldRow(NSString *value, CGFloat w, id target, SEL action) {
 UIView *PHFieldRowPlain(NSString *value, CGFloat w) {
     UIView *row = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, PH_ROW_H)];
     row.backgroundColor = PH_FIELD;
-    row.layer.cornerRadius = 10;
-    UILabel *v = PHLabel(value, 15, PH_TEXT, NO);
+    row.layer.cornerRadius = 9;
+    UILabel *v = PHLabel(value, 14, PH_TEXT, NO);
     v.frame = CGRectMake(14, 0, w - 28, PH_ROW_H);
     v.lineBreakMode = NSLineBreakByTruncatingTail;
     [row addSubview:v];
@@ -90,11 +90,24 @@ UIButton *PHCloseButton(CGFloat size) {
     return b;
 }
 
+// 半透明毛玻璃卡片（照老贝贝：能透出后面的界面，不遮挡主程序）
 UIView *PHCardView(CGRect frame) {
     UIView *card = [[UIView alloc] initWithFrame:frame];
-    card.backgroundColor = PH_BG;
+    card.backgroundColor = [UIColor clearColor];
     card.layer.cornerRadius = PH_PANEL_RADIUS;
     card.clipsToBounds = YES;
+
+    UIVisualEffectView *blur = [[UIVisualEffectView alloc]
+        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark]];
+    blur.frame = card.bounds;
+    blur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [card addSubview:blur];
+
+    UIView *tint = [[UIView alloc] initWithFrame:card.bounds];
+    tint.backgroundColor = [UIColor colorWithWhite:0 alpha:0.30];
+    tint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    tint.userInteractionEnabled = NO;
+    [card addSubview:tint];
     return card;
 }
 

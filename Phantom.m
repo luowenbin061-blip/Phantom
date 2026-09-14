@@ -96,15 +96,17 @@ static void phTapStrategy(int strategy, CGPoint ptNorm, NSString *tag) {
     });
 }
 
-#pragma mark - 悬浮球（可拖动 / 形状 / 吸附 / 边缘收纳 / 自定义图标）
+#pragma mark - 悬浮球（全屏透明窗 + 球视图随指移动；收纳态 = 贴边毛玻璃条）
 
-static UIWindow        *g_ballWin = nil;
-static UIView          *g_ballBody = nil;
+static UIWindow        *g_ballWin = nil;    // 全屏透明窗（只在球/条范围拦截触摸）
+static UIView          *g_ballHost = nil;   // 球容器（自由移动，含投影）
+static UIView          *g_ballBody = nil;   // 球体（毛玻璃 + 细边）
 static UIImageView     *g_ballIcon = nil;
 static UIControl       *g_ballCtl = nil;
+static BOOL             g_ballCollapsed = NO;
 
-#define PH_BALL_SIZE 46.0
-#define PH_BALL_PAD  9.0
+#define PH_BALL_D   46.0     // 球直径
+#define PH_STRIP_W  11.0     // 收纳条宽度
 
 static NSInteger PHCfgI(NSString *key, NSInteger def) {
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
@@ -117,35 +119,54 @@ static CGSize PHBallScreenSize(void) {
 }
 
 static void PHBallSavePosition(void) {
-    if (!g_ballWin) return;
+    if (!g_ballHost) return;
     CGSize S = PHBallScreenSize();
     if (S.width <= 0 || S.height <= 0) return;
-    CGRect f = g_ballWin.frame;
+    CGRect f = g_ballHost.frame;
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
     [ud setDouble:f.origin.x / S.width forKey:@"phantom_ball_x"];
     [ud setDouble:f.origin.y / S.height forKey:@"phantom_ball_y"];
     [ud synchronize];
-    PLog(@"ball pos saved (%.0f,%.0f) → ratio (%.3f,%.3f)", f.origin.x, f.origin.y,
-         f.origin.x / S.width, f.origin.y / S.height);
+    PLog(@"ball pos saved (%.0f,%.0f) → ratio (%.3f,%.3f) collapsed=%d",
+         f.origin.x, f.origin.y, f.origin.x / S.width, f.origin.y / S.height, (int)g_ballCollapsed);
 }
 
-// 松手：夹回屏幕内 → 吸附（若开启）→ 边缘收纳（若开启）→ 记住位置
-static void PHBallSettle(void) {
-    if (!g_ballWin) return;
+// 切换「球 / 收纳条」形态
+static void PHBallSetCollapsed(BOOL collapsed) {
+    if (!g_ballHost || g_ballCollapsed == collapsed) return;
+    g_ballCollapsed = collapsed;
     CGSize S = PHBallScreenSize();
-    BOOL attach   = (PHCfgI(@"phantom_ball_attach", 0) == 0);   // 0=吸附
-    BOOL edgeHide = (PHCfgI(@"phantom_edge_hide", 0) == 1);
-    CGRect f = g_ballWin.frame;
-    f.origin.y = MAX(-PH_BALL_PAD, MIN(f.origin.y, S.height - f.size.height));
-    CGFloat hide = edgeHide ? PH_BALL_SIZE * 0.45 : 0;
-    if (attach) {
-        BOOL right = (f.origin.x + f.size.width / 2.0) > S.width / 2.0;
-        f.origin.x = right ? (S.width - f.size.width + hide) : -hide;
+    CGRect f = g_ballHost.frame;
+    BOOL right = (f.origin.x + f.size.width / 2.0) > S.width / 2.0;
+    if (collapsed) {
+        f.size = CGSizeMake(PH_STRIP_W, PH_BALL_D);
+        f.origin.x = right ? S.width - PH_STRIP_W : 0;
     } else {
-        f.origin.x = MAX(-PH_BALL_PAD, MIN(f.origin.x, S.width - f.size.width + PH_BALL_PAD));
+        f.size = CGSizeMake(PH_BALL_D, PH_BALL_D);
+        f.origin.x = right ? S.width - PH_BALL_D : 0;
     }
-    if (!CGRectEqualToRect(f, g_ballWin.frame)) {
-        [UIView animateWithDuration:0.18 animations:^{ g_ballWin.frame = f; }];
+    g_ballHost.frame = f;
+    g_ballBody.frame = g_ballHost.bounds;
+    g_ballBody.layer.cornerRadius = collapsed ? PH_STRIP_W / 2.0 : (PHCfgI(@"phantom_ball_shape", 1) == 0 ? 12.0 : PH_BALL_D / 2.0);
+    g_ballIcon.hidden = collapsed;                       // 条态不显示图标
+    g_ballHost.layer.shadowOpacity = collapsed ? 0.25 : 0.38;
+    PLog(@"ball collapsed=%d", (int)collapsed);
+}
+
+// 松手：夹回屏幕 → 吸附（若开）→ 收纳（若开）→ 记住位置
+static void PHBallSettle(void) {
+    if (!g_ballHost) return;
+    CGSize S = PHBallScreenSize();
+    BOOL attach   = (PHCfgI(@"phantom_ball_attach", 0) == 0);
+    BOOL collapse = (PHCfgI(@"phantom_edge_hide", 0) == 1);
+    CGRect f = g_ballHost.frame;
+    f.origin.y = MAX(0, MIN(f.origin.y, S.height - f.size.height));
+    f.origin.x = MAX(-f.size.width / 3.0, MIN(f.origin.x, S.width - f.size.width * 2.0 / 3.0));
+    [UIView animateWithDuration:0.16 animations:^{ g_ballHost.frame = f; }];
+    if (attach) {
+        PHBallSetCollapsed(collapse);
+    } else if (g_ballCollapsed) {
+        PHBallSetCollapsed(NO);
     }
     PHBallSavePosition();
 }
@@ -153,9 +174,10 @@ static void PHBallSettle(void) {
 // 按设置刷外观：形状（方/圆）+ 自定义图标
 static void PHBallRestyle(void) {
     if (!g_ballBody) return;
-    NSInteger shape = PHCfgI(@"phantom_ball_shape", 1);          // 0=方 1=圆
-    g_ballBody.layer.cornerRadius = (shape == 0) ? 12.0 : PH_BALL_SIZE / 2.0;
-
+    NSInteger shape = PHCfgI(@"phantom_ball_shape", 1);
+    if (!g_ballCollapsed) {
+        g_ballBody.layer.cornerRadius = (shape == 0) ? 12.0 : PH_BALL_D / 2.0;
+    }
     NSString *iconName = [[NSUserDefaults standardUserDefaults] stringForKey:@"phantom_ball_icon"];
     UIImage *custom = nil;
     if (iconName.length) {
@@ -169,10 +191,28 @@ static void PHBallRestyle(void) {
     } else {
         g_ballIcon.image = PHIcon(@"hand.tap.fill", 21, [UIColor colorWithWhite:1.0 alpha:0.95]);
         g_ballIcon.contentMode = UIViewContentModeScaleAspectFit;
-        g_ballIcon.frame = CGRectMake((PH_BALL_SIZE - 24) / 2.0, (PH_BALL_SIZE - 24) / 2.0, 24, 24);
+        g_ballIcon.frame = CGRectMake((PH_BALL_D - 24) / 2.0, (PH_BALL_D - 24) / 2.0, 24, 24);
     }
-    PLog(@"ball restyle: shape=%ld icon=%@", (long)shape, custom ? @"自定义" : @"默认");
+    PLog(@"ball restyle: shape=%ld icon=%@ collapsed=%d",
+         (long)shape, custom ? @"自定义" : @"默认", (int)g_ballCollapsed);
 }
+
+// 全屏窗：只有球/条范围接收触摸，其他区域穿透给下层 App
+@interface PHBallWindow : UIWindow
+@property (nonatomic, weak) UIView *hitTarget;
+@end
+
+@implementation PHBallWindow
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    if (self.hitTarget) {
+        CGPoint p = [self.hitTarget convertPoint:point fromView:self];
+        if ([self.hitTarget pointInside:p withEvent:event]) {
+            return [super hitTest:point withEvent:event];
+        }
+    }
+    return nil;   // 穿透
+}
+@end
 
 @interface PHBallControl : UIControl
 @property (nonatomic) CGPoint startTouch;
@@ -184,11 +224,11 @@ static void PHBallRestyle(void) {
 @implementation PHBallControl
 
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
-    self.startTouch = [touch locationInView:nil];
-    self.startOrigin = self.window.frame.origin;
+    self.startTouch = [touch locationInView:self.window];
+    self.startOrigin = g_ballHost.frame.origin;
     self.moved = NO;
     self.longFired = NO;
-    self.alpha = 0.78;
+    self.alpha = 0.85;
     PHBallControl *me = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.9 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
@@ -198,20 +238,29 @@ static void PHBallRestyle(void) {
 }
 
 - (BOOL)continueTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
-    CGPoint pt = [touch locationInView:nil];
+    if (!g_ballHost) return YES;
+    CGPoint pt = [touch locationInView:self.window];   // 窗口不动 → 坐标稳定，跟手
     CGFloat dx = pt.x - self.startTouch.x, dy = pt.y - self.startTouch.y;
-    if (!self.moved && (fabs(dx) > 5 || fabs(dy) > 5)) self.moved = YES;
+    if (!self.moved && (fabs(dx) > 4 || fabs(dy) > 4)) self.moved = YES;
     if (!self.moved) return YES;
-    CGRect f = self.window.frame;
+    CGRect f = g_ballHost.frame;
     f.origin = CGPointMake(self.startOrigin.x + dx, self.startOrigin.y + dy);
-    self.window.frame = f;       // 球跟着手指走
+    g_ballHost.frame = f;      // 只动球视图，不动窗口 → 毛玻璃背景不重算，不抖
     return YES;
 }
 
 - (void)endTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
     self.alpha = 1.0;
-    if (self.moved) PHBallSettle();
-    else if (!self.longFired) PHShowMenu();
+    if (self.moved) {
+        PHBallSettle();
+    } else if (!self.longFired) {
+        if (g_ballCollapsed) {          // 点收纳条：展开 + 打开面板
+            PHBallSetCollapsed(NO);
+            PHShowMenu();
+        } else {
+            PHShowMenu();
+        }
+    }
 }
 
 - (void)cancelTrackingWithEvent:(UIEvent *)event {
@@ -224,13 +273,16 @@ static void PHBallRestyle(void) {
 void PHRefreshBall(void) {
     if (g_ballWin) {
         g_ballWin.hidden = YES;
-        g_ballWin = nil; g_ballBody = nil; g_ballIcon = nil; g_ballCtl = nil;
+        g_ballWin = nil; g_ballHost = nil; g_ballBody = nil; g_ballIcon = nil; g_ballCtl = nil;
+        g_ballCollapsed = NO;
     }
     phCreateBall();
 }
 
 void PHBallApplyLayout(void) {
     PHBallRestyle();
+    BOOL collapse = (PHCfgI(@"phantom_edge_hide", 0) == 1);
+    PHBallSetCollapsed(collapse);
     PHBallSettle();
 }
 
@@ -244,29 +296,34 @@ static void phCreateBall(void) {
     if (!scene) { PLog(@"ball: no scene"); return; }
     CGSize S = scene.screen.bounds.size;
 
-    CGFloat winSize = PH_BALL_SIZE + PH_BALL_PAD * 2;
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
     CGFloat rx = [ud objectForKey:@"phantom_ball_x"] ? [ud doubleForKey:@"phantom_ball_x"] : 0.012;
     CGFloat ry = [ud objectForKey:@"phantom_ball_y"] ? [ud doubleForKey:@"phantom_ball_y"] : 0.19;
+    BOOL collapse = (PHCfgI(@"phantom_edge_hide", 0) == 1);
+    BOOL attach   = (PHCfgI(@"phantom_ball_attach", 0) == 0);
 
-    UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
-    w.frame = CGRectMake(rx * S.width, ry * S.height, winSize, winSize);
+    PHBallWindow *w = [[PHBallWindow alloc] initWithWindowScene:scene];
+    w.frame = CGRectMake(0, 0, S.width, S.height);      // 全屏（透明）
     w.windowLevel = UIWindowLevelAlert + 90;
     w.backgroundColor = [UIColor clearColor];
-    w.userInteractionEnabled = YES;
+    w.windowLevel = UIWindowLevelAlert + 90;
     g_ballWin = w;
 
-    UIView *host = [[UIView alloc] initWithFrame:CGRectMake(PH_BALL_PAD, PH_BALL_PAD, PH_BALL_SIZE, PH_BALL_SIZE)];
+    CGFloat posX = rx * S.width, posY = ry * S.height;
+    if (attach && collapse) posX = (posX + PH_BALL_D / 2.0 > S.width / 2.0) ? S.width - PH_STRIP_W : 0;
+
+    UIView *host = [[UIView alloc] initWithFrame:CGRectMake(posX, posY, PH_BALL_D, PH_BALL_D)];
     host.backgroundColor = [UIColor clearColor];
     host.layer.shadowColor = [UIColor blackColor].CGColor;
     host.layer.shadowOpacity = 0.38;
     host.layer.shadowRadius = 7.0;
     host.layer.shadowOffset = CGSizeMake(0, 2);
     [w addSubview:host];
+    g_ballHost = host;
 
     UIView *ball = [[UIView alloc] initWithFrame:host.bounds];
     ball.clipsToBounds = YES;
-    ball.layer.cornerRadius = PH_BALL_SIZE / 2.0;
+    ball.layer.cornerRadius = PH_BALL_D / 2.0;
     ball.layer.borderWidth = 1.0;
     ball.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.22].CGColor;
     [host addSubview:ball];
@@ -275,6 +332,7 @@ static void phCreateBall(void) {
     UIVisualEffectView *blur = [[UIVisualEffectView alloc]
         initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
     blur.frame = ball.bounds;
+    blur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [ball addSubview:blur];
 
     UIImageView *icon = [[UIImageView alloc] init];
@@ -283,13 +341,17 @@ static void phCreateBall(void) {
 
     PHBallControl *ctl = [[PHBallControl alloc] initWithFrame:ball.bounds];
     ctl.backgroundColor = [UIColor clearColor];
+    ctl.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [ball addSubview:ctl];
     g_ballCtl = ctl;
+    w.hitTarget = ctl;      // 只有球范围拦触摸
 
     w.hidden = NO;
     PHBallRestyle();
-    PLog(@"phantom ball created at (%.0f,%.0f) 直径%.0f 形状=%ld（毛玻璃圆球·可拖动）",
-         w.frame.origin.x, w.frame.origin.y, PH_BALL_SIZE, (long)PHCfgI(@"phantom_ball_shape", 1));
+    if (attach && collapse) PHBallSetCollapsed(YES);
+    PLog(@"phantom ball created at (%.0f,%.0f) 直径%.0f 形状=%ld 收纳=%d（全屏窗+视图移动）",
+         host.frame.origin.x, host.frame.origin.y, PH_BALL_D,
+         (long)PHCfgI(@"phantom_ball_shape", 1), (int)g_ballCollapsed);
 }
 
 #pragma mark - 悬浮球图标（相册选图）
@@ -478,8 +540,7 @@ static void phSelftest(void) {
 
     // v0.4：悬浮球行为（拖动保存 / 形状 / 图标复位 / 重建）
     NSUserDefaults *udB = [NSUserDefaults standardUserDefaults];
-    CGRect bf = g_ballWin.frame;
-    g_ballWin.frame = CGRectMake(120, 300, bf.size.width, bf.size.height);
+    g_ballHost.frame = CGRectMake(120, 300, PH_BALL_D, PH_BALL_D);
     PHBallSavePosition();
     PH_CHECK([udB objectForKey:@"phantom_ball_x"] != nil, @"悬浮球位置可保存");
     [udB setInteger:0 forKey:@"phantom_ball_shape"];
@@ -493,6 +554,13 @@ static void phSelftest(void) {
     PH_CHECK([udB objectForKey:@"phantom_ball_icon"] == nil, @"恢复默认图标生效");
     PHRefreshBall();
     PH_CHECK(g_ballWin != nil && g_ballCtl != nil, @"悬浮球可按设置重建（带拖动控件）");
+    [udB setInteger:1 forKey:@"phantom_edge_hide"];
+    [udB setInteger:0 forKey:@"phantom_ball_attach"];
+    PHBallSetCollapsed(YES);
+    PH_CHECK(g_ballCollapsed && g_ballHost.frame.size.width < PH_BALL_D, @"边缘收纳：变成贴边细条");
+    PHBallSetCollapsed(NO);
+    PH_CHECK(!g_ballCollapsed && g_ballHost.frame.size.width > 40, @"展开：恢复成球");
+    [udB setInteger:0 forKey:@"phantom_edge_hide"];
 
     // 合成点击调用链（模拟器里 dispatch 无真实效果，但要确保不崩）
     if (g_iokitReady) {
