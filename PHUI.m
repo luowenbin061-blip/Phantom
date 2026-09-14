@@ -451,9 +451,9 @@ static NSInteger g_editIndex = -1;
 + (void)onRecord    { PHToast(@"录制功能将在后续阶段接入"); }
 + (void)onSuccess   { PHToast(@"「识别成功后动作」将在识别引擎阶段接入"); }
 + (void)onDelete    {
-+    if (g_editIndex >= 0 && g_editIndex < (NSInteger)[PHActions() count]) {
-+        [PHActions() removeObjectAtIndex:g_editIndex];
-+        PHSaveTasks();
+    if (g_editIndex >= 0 && g_editIndex < (NSInteger)[PHActions() count]) {
+        [PHActions() removeObjectAtIndex:g_editIndex];
+        PHSaveTasks();
     }
     PHShowMenu();
     PHToast(@"已删除该动作");
