@@ -378,7 +378,19 @@ static void phSelftest(void) {
     g_stLog = [NSMutableString string];
     PLog(@"selftest begin");
 
-    PH_CHECK(g_iokitReady == NO, @"模拟器无真实 IOKit → 优雅降级（不崩）");
+    // 真机实测口径：模拟器也能 dlopen IOKit 并解析到符号（只是 dispatch 无真实效果）
+    PH_CHECK(g_iokitReady, @"IOKit 加载流程已执行且符号解析成功");
+    PH_CHECK(g_iokitReady ? (pFingerEvent != NULL && pDispatch != NULL) : YES,
+             @"关键函数指针非空（Create/Dispatch/Finger）");
+    if (g_iokitReady) {
+        // 真正有价值的验证：事件创建参数签名是否正确（签名错会返回 NULL 或直接崩）
+        CGSize S = [UIScreen mainScreen].bounds.size;
+        IOHIDEventRef ev = pFingerEvent(NULL, mach_absolute_time(), 1, 2, 7,
+                                        100.0f / S.width, 300.0f / S.height,
+                                        0, 0.6f, 0, TRUE, TRUE, 0);
+        PH_CHECK(ev != NULL, @"合成触摸事件创建成功（参数签名正确）");
+        if (ev) CFRelease(ev);
+    }
     PH_CHECK(g_ballWin != nil, @"悬浮球窗口已创建");
     phShowPanel();
     PH_CHECK(g_panelWin != nil && !g_panelWin.hidden, @"验证面板已显示");
