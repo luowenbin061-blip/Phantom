@@ -1,0 +1,53 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile dylib (iphoneos, arm64)
+        run: |
+          set -e
+          SYSROOT=$(xcrun --sdk iphoneos --show-sdk-path)
+          BUILD_CMD=(
+            xcrun --sdk iphoneos clang -dynamiclib
+            -arch arm64
+            -miphoneos-version-min=15.0
+            -isysroot "$SYSROOT"
+            -fobjc-arc
+            -fvisibility=hidden
+            -O2
+            -Wall
+            -install_name @rpath/Phantom.dylib
+            -o Phantom.dylib Phantom.m
+            -framework Foundation -framework UIKit
+            -framework CoreGraphics -framework QuartzCore
+          )
+          "${BUILD_CMD[@]}"
+          # 缺 LC_DYLD_CHAINED_FIXUPS 时 dyld 会静默拒绝加载
+          if ! otool -l Phantom.dylib | grep -q LC_DYLD_CHAINED_FIXUPS; then
+            echo "chained fixups missing, relinking with -fixup_chains"
+            "${BUILD_CMD[@]}" -Wl,-fixup_chains
+            otool -l Phantom.dylib | grep -q LC_DYLD_CHAINED_FIXUPS
+          fi
+          echo "--- verify ---"
+          otool -l Phantom.dylib | grep -A2 LC_DYLD_CHAINED_FIXUPS
+          file Phantom.dylib
+
+      - name: Pseudo-sign (ldid, empty entitlements)
+        run: |
+          brew install ldid
+          ldid -S Phantom.dylib
+          ldid -e Phantom.dylib || echo "(no entitlements embedded - OK for injected use)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Phantom-dylib
+          path: Phantom.dylib
+          if-no-files-found: error
