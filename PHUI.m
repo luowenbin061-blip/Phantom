@@ -17,12 +17,19 @@ static CGFloat       g_pW = 0;      // 卡片内宽
 static CGFloat       g_pY = 0;      // 内容累计 y
 static BOOL          g_pTall = NO;  // 是否强制高面板
 
+// 主菜单（照老贝贝主界面）独立窗口
+static UIWindow     *g_mWin = nil;
+static UIView       *g_mCard = nil;
+static UIScrollView *g_mScroll = nil;
+static UIView       *g_mListHost = nil;
+static CGFloat       g_mW = 0;
+
 static void PHClosePanel(void) {
     if (g_pWin) { g_pWin.hidden = YES; g_pWin = nil; g_pCard = nil; g_pScroll = nil; }
 }
 
 BOOL PHIsPanelOpen(void) {
-    return (g_pWin != nil && !g_pWin.hidden);
+    return ((g_pWin != nil && !g_pWin.hidden) || (g_mWin != nil && !g_mWin.hidden));
 }
 
 @interface PHActions2 : NSObject
@@ -275,12 +282,6 @@ void PHToast(NSString *text) {
 }
 
 #pragma mark - 主菜单（照老贝贝主界面：标题 + 动作卡片列表 + 底部四个彩色圆按钮）
-
-static UIWindow     *g_mWin = nil;
-static UIView       *g_mCard = nil;
-static UIScrollView *g_mScroll = nil;
-static UIView       *g_mListHost = nil;
-static CGFloat       g_mW = 0;
 
 @interface PHMenuActions : NSObject
 + (void)onClose;
