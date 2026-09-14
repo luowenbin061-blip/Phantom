@@ -515,6 +515,69 @@ static void phSelftest(void) {
     PHRefreshBall();
     PH_CHECK(g_ballWin != nil && g_ballCtl != nil, @"悬浮球可按设置重建（带拖动控件）");
 
+    // v0.6：吸附（必执行）/ 收纳条完全可见 / 条态也吸附 / 自动收纳计时
+    [udB setInteger:0 forKey:@"phantom_ball_attach"];     // 开吸附
+    g_ballHost.frame = CGRectMake(150, 400, PH_BALL_D, PH_BALL_D);
+    PHBallSettle();
+    CGSize SZ = PHBallScreenSize();
+    PH_CHECK(fabs(g_ballHost.frame.origin.x) < 0.5 ||
+             fabs(g_ballHost.frame.origin.x - (SZ.width - PH_BALL_D)) < 0.5,
+             @"吸附：松手后贴到左/右边缘（每次必执行）");
+    [udB setInteger:1 forKey:@"phantom_edge_hide"];
+    PHBallSetCollapsed(YES);
+    PH_CHECK(g_ballCollapsed && g_ballHost.frame.size.width < PH_BALL_D, @"边缘收纳：变成贴边细条");
+    PH_CHECK(g_ballHost.frame.origin.x >= -0.5 &&
+             g_ballHost.frame.origin.x + g_ballHost.frame.size.width <= SZ.width + 0.5,
+             @"收纳条完全在屏幕内（不出屏）");
+    g_ballHost.frame = CGRectMake(150, 400, PH_STRIP_W, PH_BALL_D);
+    PHBallSettle();
+    PH_CHECK(g_ballHost.frame.origin.x <= 0.5 ||
+             g_ballHost.frame.origin.x + PH_STRIP_W >= SZ.width - 0.5,
+             @"收纳条拖动后同样吸附到边缘");
+    PHBallSetCollapsed(NO);
+    PH_CHECK(!g_ballCollapsed && g_ballHost.frame.size.width > 40, @"展开：恢复成球");
+    g_ballIdleGen = 0;
+    PHBallScheduleAutoCollapse();
+    PH_CHECK(g_ballIdleGen > 0, @"自动收纳已排期（20 秒无操作才收纳）");
+    [udB setInteger:0 forKey:@"phantom_edge_hide"];
+
+    // 合成点击调用链（模拟器里 dispatch 无真实效果，但要确保不崩）
+    if (g_iokitReady) {
+        phTapStrategy(0, CGPointMake(0.5, 0.5), @"自测");
+        PH_CHECK(YES, @"合成点击调用链执行完成（不崩）");
+    }
+
+    // UI：主菜单 / 动作卡片 / 各面板
+    PHShowMenu();
+    PH_CHECK(PHIsPanelOpen(), @"主菜单面板已显示");
+    PH_CHECK(PHActions() != nil, @"任务列表可读");
+    for (NSInteger t = 0; t < 9; t++) [PHActions() addObject:[PHAction actionWithType:(PHActionType)t]];
+    PH_CHECK(PHActions().count >= 9, @"9 类动作都能建进任务列表");
+    BOOL allEditOK = YES;
+    for (NSInteger i = 0; i < 9; i++) {
+        PHShowActionEdit(i);
+        if (!PHIsPanelOpen()) { allEditOK = NO; break; }
+    }
+    PH_CHECK(allEditOK, @"9 类动作编辑卡片全部可构建");
+    PHShowAddAction(); PH_CHECK(PHIsPanelOpen(), @"添加动作卡片已显示");
+    PHShowSettings();  PH_CHECK(PHIsPanelOpen(), @"设置面板已显示");
+    PHShowScripts();   PH_CHECK(PHIsPanelOpen(), @"脚本管理面板已显示");
+    PHShowLogPanel();  PH_CHECK(g_logWin != nil && !g_logWin.hidden, @"日志面板已显示");
+
+    PHAction *a = [PHActions() objectAtIndex:0];
+    a.desc = @"测试描述";
+    a.pressMs = 66;
+    PHAction *b = [PHAction fromDict:[a toDict]];
+    PH_CHECK([b.desc isEqualToString:@"测试描述"] && fabs(b.pressMs - 66) < 0.01,
+             @"动作模型 JSON 往返正确");
+
+    NSString *doc = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    [g_stLog writeToFile:[doc stringByAppendingPathComponent:@"Phantom_selftest.txt"]
+              atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    PLog(@"selftest RESULT pass=%d fail=%d", g_stPass, g_stFail);
+    stWrite([NSString stringWithFormat:@"RESULT pass=%d fail=%d", g_stPass, g_stFail]);
+}
+
 #pragma mark - 入口
 
 __attribute__((constructor))
