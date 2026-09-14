@@ -105,6 +105,8 @@ static UIImageView     *g_ballIcon = nil;
 static UIControl       *g_ballCtl = nil;
 static BOOL             g_ballCollapsed = NO;
 
+static void PHBallRestyle(void);   // 前置声明（PHBallApplyLayout 在它之前调用）
+
 #define PH_BALL_D   46.0     // 球直径
 #define PH_STRIP_W  11.0     // 收纳条宽度
 
