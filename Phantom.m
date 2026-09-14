@@ -1,14 +1,12 @@
-// 幻影 Phantom v0.1 —— 触摸合成验证（go/no-go 门）
+// 幻影 Phantom v0.2 —— 完整 UI 骨架版
 // ============================================================
-// 目标：验证 TrollFools 注入环境下，IOKit 私有 API 能否合成"系统级触摸"。
-// 这是自研连点器（参考老贝贝功能思路，代码全新实现）的第一块地基。
-//
-// 验证方法（自证闭环）：
-//   注入后 5/8/11 秒，用三种不同策略（IOHIDEventSystemClient 的三种创建方式）
-//   分别对「幻影自己的悬浮球中心」发一次合成点击。
-//   哪个策略把悬浮球点开了（面板弹出），哪个策略就是有效策略。
-//
-// 零依赖：全部私有符号运行时 dlsym 解析，不缺一崩；模拟器（无真实 IOKit）自动降级。
+// 本版目标：把「和老贝贝一样的 UI」搭起来
+//   · 点悬浮球 → 任务面板（动作列表 + 添加/执行/录制/设置/脚本/清空）
+//   · 添加动作卡片（9 类动作：点击/双击/长按/滑动/识图/识色/识字/等待/录制）
+//   · 各动作编辑卡片（字段照老贝贝：动作描述/执行次数/坐标/时长/相似度/成功后动作…）
+//   · 设置弹窗（整体执行/定时/脚本管理/悬浮球形状·吸附·收纳/触摸轨迹/防录屏/广告加速/拦截跳转/自动关闭弹出）
+//   · 长按悬浮球 → 日志面板（复制日志）
+// 触摸合成引擎（阶段 0 已验证参数签名）保留在文件里，阶段 1 接执行器。
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
@@ -16,22 +14,14 @@
 #import <dlfcn.h>
 #import <mach/mach_time.h>
 #import <stdatomic.h>
+#import "PH.h"
 
-#define PH_VERSION @"0.1"
+#define PH_VERSION @"0.2"
 
-@interface PhantomActions : NSObject
-+ (void)onBallTap;
-+ (void)onCopy;
-+ (void)onRerun;
-+ (void)onPanelClose;
-@end
+static void PHShowLogPanel(void);
 
-static void phShowBanner(NSString *text);
-static void phShowPanel(void);
-static void phRunVerification(void);
-static void phCreateBall(void);
+#pragma mark - 日志
 
-// ---------------- 日志 ----------------
 static NSString *g_logPath = nil;
 
 static void phLogLine(NSString *msg) {
@@ -54,7 +44,8 @@ static void phLogLine(NSString *msg) {
 }
 #define PLog(fmt, ...) do { phLogLine([NSString stringWithFormat:(fmt), ##__VA_ARGS__]); } while (0)
 
-// ---------------- IOKit 私有符号（运行时解析） ----------------
+#pragma mark - 触摸合成引擎（阶段 0 已验证参数签名；阶段 1 接执行器）
+
 typedef struct CF_BRIDGED_TYPE(id) __IOHIDEvent *IOHIDEventRef;
 typedef struct CF_BRIDGED_TYPE(id) __IOHIDEventSystemClient *IOHIDEventSystemClientRef;
 
@@ -66,71 +57,59 @@ static IOHIDEventRef (*pFingerEvent)(CFAllocatorRef, uint64_t, uint32_t, uint32_
 
 static IOHIDEventSystemClientRef g_c0 = NULL, g_c1 = NULL, g_c2 = NULL;
 static BOOL g_iokitReady = NO;
-static atomic_int  g_busy = 0;   // 防止点击序列重入
+static atomic_int g_tapBusy = 0;
 
 static BOOL phLoadIOKit(void) {
     void *h = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW);
     PLog(@"IOKit dlopen: %@", h ? @"成功" : [NSString stringWithFormat:@"失败(%s)", dlerror()]);
     if (!h) return NO;
-    pCreate       = dlsym(h, "IOHIDEventSystemClientCreate");
+    pCreate         = dlsym(h, "IOHIDEventSystemClientCreate");
     pCreateWithType = dlsym(h, "IOHIDEventSystemClientCreateWithType");
-    pDispatch     = dlsym(h, "IOHIDEventSystemClientDispatchEvent");
-    pFingerEvent  = dlsym(h, "IOHIDEventCreateDigitizerFingerEvent");
+    pDispatch       = dlsym(h, "IOHIDEventSystemClientDispatchEvent");
+    pFingerEvent    = dlsym(h, "IOHIDEventCreateDigitizerFingerEvent");
     PLog(@"符号解析：Create=%p CreateWithType=%p Dispatch=%p Finger=%p",
          pCreate, pCreateWithType, pDispatch, pFingerEvent);
     return (pCreate && pDispatch && pFingerEvent);
 }
 
-// ---------------- 合成点击 ----------------
-// Digitizer 事件掩码：Range=1 Touch=2 Position=4；坐标用归一化 0~1
-static void phTapWithClient(IOHIDEventSystemClientRef client, CGPoint pt, NSString *tag) {
-    if (!client) { PLog(@"[%@] client 为空，跳过", tag); return; }
-    CGSize S = [UIScreen mainScreen].bounds.size;
-    float nx = (float)(pt.x / S.width), ny = (float)(pt.y / S.height);
-    uint64_t t = mach_absolute_time();
-    IOHIDEventRef down = pFingerEvent(NULL, t, 1, 2, 7, nx, ny, 0, 0.62f, 0, TRUE, TRUE, 0);
-    IOHIDEventRef up   = pFingerEvent(NULL, t + 1, 1, 2, 3, nx, ny, 0, 0.0f, 0, FALSE, FALSE, 0);
-    if (!down || !up) { PLog(@"[%@] 事件创建失败", tag); return; }
-    pDispatch(client, down);
-    [NSThread sleepForTimeInterval:0.08];
-    pDispatch(client, up);
-    PLog(@"[%@] 已派发点击 (%.0f,%.0f) → 归一化 (%.4f,%.4f)", tag, pt.x, pt.y, nx, ny);
-}
-
-// 防重入：一次只跑一个策略（后台线程 sleep 出 80ms 按压间隔）
-static void phTapStrategy(int strategy, CGPoint pt) {
+// 合成一次点击（归一化坐标 0~1）；策略 0/1/2 = 三种 client 创建方式
+static void phTapStrategy(int strategy, CGPoint ptNorm, NSString *tag) {
     int expected = 0;
-    if (!atomic_compare_exchange_strong(&g_busy, &expected, 1)) {
-        PLog(@"[策略%d] 上一次点击还没跑完，跳过", strategy);
-        return;
-    }
+    if (!atomic_compare_exchange_strong(&g_tapBusy, &expected, 1)) return;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         @try {
-            IOHIDEventSystemClientRef c = NULL;
-            NSString *tag = nil;
             @try {
-                if (strategy == 0) {
-                    if (!g_c0 && pCreate) g_c0 = pCreate(CFAllocatorGetDefault());
-                    c = g_c0; tag = @"策略A:Create";
-                } else if (strategy == 1) {
-                    if (!g_c1 && pCreateWithType) g_c1 = pCreateWithType(CFAllocatorGetDefault(), 0, NULL);
-                    c = g_c1; tag = @"策略B:CreateWithType(0)";
-                } else {
-                    if (!g_c2 && pCreateWithType) g_c2 = pCreateWithType(CFAllocatorGetDefault(), 1, NULL);
-                    c = g_c2; tag = @"策略C:CreateWithType(1)";
-                }
-            } @catch (NSException *e) { PLog(@"[策略%d] client 创建异常: %@", strategy, e); }
-            phTapWithClient(c, pt, tag ?: @"策略?");
-        } @finally { atomic_store(&g_busy, 0); }
+                if (strategy == 0 && !g_c0 && pCreate) g_c0 = pCreate(CFAllocatorGetDefault());
+                else if (strategy == 1 && !g_c1 && pCreateWithType) g_c1 = pCreateWithType(CFAllocatorGetDefault(), 0, NULL);
+                else if (strategy == 2 && !g_c2 && pCreateWithType) g_c2 = pCreateWithType(CFAllocatorGetDefault(), 1, NULL);
+            } @catch (NSException *e) { PLog(@"[%@] client 异常: %@", tag, e); }
+            IOHIDEventSystemClientRef c = (strategy == 0) ? g_c0 : (strategy == 1 ? g_c1 : g_c2);
+            if (!c) { PLog(@"[%@] client 为空", tag); return; }
+            uint64_t t = mach_absolute_time();
+            IOHIDEventRef down = pFingerEvent(NULL, t, 1, 2, 7, ptNorm.x, ptNorm.y, 0, 0.62f, 0, TRUE, TRUE, 0);
+            IOHIDEventRef up   = pFingerEvent(NULL, t + 1, 1, 2, 3, ptNorm.x, ptNorm.y, 0, 0.0f, 0, FALSE, FALSE, 0);
+            if (!down || !up) { PLog(@"[%@] 事件创建失败", tag); return; }
+            pDispatch(c, down);
+            [NSThread sleepForTimeInterval:0.08];
+            pDispatch(c, up);
+            PLog(@"[%@] 已派发点击 归一化(%.4f,%.4f)", tag, ptNorm.x, ptNorm.y);
+        } @finally { atomic_store(&g_tapBusy, 0); }
     });
 }
 
-// ---------------- 悬浮球 + 面板（复用哨兵已验证的窗口/面板结构） ----------------
+#pragma mark - 悬浮球
+
 static UIWindow *g_ballWin = nil;
-static UIWindow *g_panelWin = nil;
-static UITextView *g_panelLog = nil;
-static UILabel *g_panelState = nil;
-static CGPoint g_ballCenter = { 26.0, 187.0 };   // 左侧球中心（点击自证目标）
+
+@interface PHBallActions : NSObject
++ (void)onTap;
++ (void)onLong;
+@end
+
+@implementation PHBallActions
++ (void)onTap  { PHShowMenu(); }
++ (void)onLong { PHShowLogPanel(); }
+@end
 
 static void phCreateBall(void) {
     if (g_ballWin) return;
@@ -143,7 +122,7 @@ static void phCreateBall(void) {
     CGSize S = scene.screen.bounds.size;
 
     UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
-    w.frame = CGRectMake(6, S.height * 0.19, 40, 40);
+    w.frame = CGRectMake(6, S.height * 0.19, 44, 44);
     w.windowLevel = UIWindowLevelAlert + 90;
     w.backgroundColor = [UIColor clearColor];
     w.userInteractionEnabled = YES;
@@ -151,132 +130,43 @@ static void phCreateBall(void) {
 
     UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
     b.frame = w.bounds;
-    b.layer.cornerRadius = 20;
-    b.backgroundColor = [UIColor colorWithRed:0.10 green:0.30 blue:0.28 alpha:0.55];
+    b.backgroundColor = [UIColor colorWithRed:0.10 green:0.30 blue:0.28 alpha:0.60];
     b.layer.borderWidth = 1.0;
     b.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.45].CGColor;
     b.clipsToBounds = YES;
     [b setTitle:@"幻" forState:UIControlStateNormal];
-    b.titleLabel.font = [UIFont boldSystemFontOfSize:15];
-    [b addTarget:[PhantomActions class] action:@selector(onBallTap)
- forControlEvents:UIControlEventTouchUpInside];
+    b.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    [b addTarget:[PHBallActions class] action:@selector(onTap) forControlEvents:UIControlEventTouchUpInside];
+    [b addTarget:[PHBallActions class] action:@selector(onLong)
+forControlEvents:UIControlEventTouchDownRepeat];
     [w addSubview:b];
-
     w.hidden = NO;
-    PLog(@"phantom ball created at (%.0f, %.0f) 中心=(%.0f, %.0f)",
-         w.frame.origin.x, w.frame.origin.y, w.center.x, w.center.y);
-    g_ballCenter = w.center;
+    PLog(@"phantom ball created at (%.0f, %.0f)", w.frame.origin.x, w.frame.origin.y);
 }
 
-// ---------------- 验证序列 ----------------
-static void phRunVerification(void) {
-    PLog(@"========== 触摸合成验证开始 ==========");
-    PLog(@"验证方法：三次合成点击幻影悬浮球中心 (%.0f, %.0f)，哪个策略把球点开（面板弹出）哪个就有效",
-         g_ballCenter.x, g_ballCenter.y);
-    PLog(@"如果你看到面板自己弹出来 = 对应策略的合成触摸真的能驱动 UI");
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        phShowBanner(@"幻影：策略A 点击悬浮球…");
-        phTapStrategy(0, g_ballCenter);
-    });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(9 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        phShowBanner(@"幻影：策略B 点击悬浮球…");
-        phTapStrategy(1, g_ballCenter);
-    });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(13 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        phShowBanner(@"幻影：策略C 点击悬浮球…");
-        phTapStrategy(2, g_ballCenter);
-    });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(17 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        phShowBanner(@"幻影：验证完成，点球看日志");
-        PLog(@"========== 触摸合成验证结束（哪个策略点开了面板，日志里看面板状态） ==========");
-    });
-}
+#pragma mark - 日志面板（长按球打开）
 
-// ---------------- 极简横幅（复用哨兵结构） ----------------
-static UIWindow *g_bannerWin = nil;
-static UILabel *g_bannerLabel = nil;
+static UIWindow *g_logWin = nil;
+static UITextView *g_logView = nil;
 
-static void phShowBanner(NSString *text) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        @try {
-            UIWindowScene *scene = nil;
-            for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
-                if ([sc isKindOfClass:[UIWindowScene class]] &&
-                    sc.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)sc; break; }
-            }
-            if (!scene) return;
-            CGSize scr = scene.screen.bounds.size;
-            CGFloat sbH = 44;
-            if (@available(iOS 13.0, *)) sbH = scene.statusBarManager.statusBarFrame.size.height;
-            if (sbH < 20) sbH = 44;
-            CGFloat h = 40, y = sbH + 6;
-            if (!g_bannerWin) {
-                UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
-                w.windowLevel = UIWindowLevelAlert + 88;
-                w.backgroundColor = [UIColor colorWithRed:0.08 green:0.42 blue:0.36 alpha:0.94];
-                w.clipsToBounds = YES;
-                UILabel *lb = [[UILabel alloc] initWithFrame:CGRectZero];
-                lb.textAlignment = NSTextAlignmentCenter;
-                lb.font = [UIFont boldSystemFontOfSize:14];
-                lb.textColor = [UIColor whiteColor];
-                lb.numberOfLines = 1;
-                lb.adjustsFontSizeToFitWidth = YES;
-                lb.minimumScaleFactor = 0.7;
-                g_bannerLabel = lb;
-                [w addSubview:lb];
-                g_bannerWin = w;
-            }
-            g_bannerWin.frame = CGRectMake(0, y - h, scr.width, h);
-            g_bannerLabel.frame = g_bannerWin.bounds;
-            g_bannerLabel.text = text;
-            g_bannerWin.hidden = NO;
-            [UIView animateWithDuration:0.22 animations:^{
-                g_bannerWin.frame = CGRectMake(0, y, scr.width, h);
-            }];
-            static int gen = 0;
-            int my = ++gen;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.6 * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{
-                if (my != gen || !g_bannerWin) return;
-                [UIView animateWithDuration:0.25 animations:^{
-                    g_bannerWin.frame = CGRectMake(0, y - h, scr.width, h);
-                } completion:^(BOOL f) { if (my == gen && g_bannerWin) g_bannerWin.hidden = YES; }];
-            });
-        } @catch (NSException *e) { PLog(@"banner exception: %@", e); }
-    });
-}
+@interface PHLogActions : NSObject
++ (void)onClose;
++ (void)onCopy;
+@end
 
-// ---------------- 面板（日志视图 + 复制日志 + 重新验证） ----------------
-@implementation PhantomActions
-+ (void)onBallTap { phShowPanel(); }
-+ (void)onCopy { 
-    NSString *log = [NSString stringWithContentsOfFile:g_logPath encoding:NSUTF8StringEncoding error:nil];
-    [UIPasteboard generalPasteboard].string = log ?: @"(日志为空)";
-}
-+ (void)onRerun {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [g_panelWin setHidden:YES];
-    });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ phRunVerification(); });
-}
-+ (void)onPanelClose {
-    if (g_panelWin) { g_panelWin.hidden = YES; g_panelWin = nil; g_panelLog = nil; }
+@implementation PHLogActions
++ (void)onClose { if (g_logWin) { g_logWin.hidden = YES; g_logWin = nil; g_logView = nil; } }
++ (void)onCopy  {
+    [UIPasteboard generalPasteboard].string =
+        [NSString stringWithContentsOfFile:g_logPath encoding:NSUTF8StringEncoding error:nil] ?: @"";
+    PHToast(@"日志已复制到剪贴板");
 }
 @end
 
-static void phShowPanel(void) {
+static void PHShowLogPanel(void) {
     @try {
-        if (g_panelWin) {
-            // 已开就刷新日志
-            NSString *log = [NSString stringWithContentsOfFile:g_logPath encoding:NSUTF8StringEncoding error:nil];
-            g_panelLog.text = log ?: @"(日志为空)";
-            NSIndexPath *dummy = nil; (void)dummy;
-            [g_panelLog scrollRangeToVisible:NSMakeRange(g_panelLog.text.length, 0)];
+        if (g_logWin) {
+            g_logView.text = [NSString stringWithContentsOfFile:g_logPath encoding:NSUTF8StringEncoding error:nil] ?: @"(空)";
             return;
         }
         UIWindowScene *scene = nil;
@@ -284,117 +174,117 @@ static void phShowPanel(void) {
             if ([sc isKindOfClass:[UIWindowScene class]] &&
                 sc.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)sc; break; }
         }
-        if (!scene) { PLog(@"panel: no scene"); return; }
+        if (!scene) return;
         CGSize S = scene.screen.bounds.size;
 
         UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
         w.frame = CGRectMake(0, 0, S.width, S.height);
-        w.windowLevel = UIWindowLevelAlert + 95;
+        w.windowLevel = UIWindowLevelAlert + 96;
         w.backgroundColor = [UIColor colorWithWhite:0 alpha:0.35];
         w.userInteractionEnabled = YES;
-        g_panelWin = w;
+        g_logWin = w;
 
         UIControl *mask = [[UIControl alloc] initWithFrame:w.bounds];
-        [mask addTarget:[PhantomActions class] action:@selector(onPanelClose)
-      forControlEvents:UIControlEventTouchUpInside];
+        [mask addTarget:[PHLogActions class] action:@selector(onClose)
+       forControlEvents:UIControlEventTouchUpInside];
         [w addSubview:mask];
 
-        CGFloat pw = round(S.width * 0.86);
-        CGFloat ph = S.height * 0.62;
-        UIView *card = [[UIView alloc] initWithFrame:CGRectMake((S.width - pw) / 2.0, (S.height - ph) / 2.0, pw, ph)];
-        card.backgroundColor = [UIColor colorWithRed:0.173 green:0.173 blue:0.180 alpha:0.96];
-        card.layer.cornerRadius = 16;
-        card.clipsToBounds = YES;
+        CGFloat pw = round(S.width * 0.88), ph = S.height * 0.62;
+        UIView *card = PHCardView(CGRectMake((S.width - pw) / 2.0, (S.height - ph) / 2.0, pw, ph));
         [w addSubview:card];
 
-        UILabel *t = [[UILabel alloc] initWithFrame:CGRectMake(16, 14, pw - 32, 22)];
-        t.text = [NSString stringWithFormat:@"幻影 v%@ · 触摸合成验证", PH_VERSION];
-        t.font = [UIFont boldSystemFontOfSize:16];
-        t.textColor = [UIColor whiteColor];
+        UILabel *t = PHLabel([NSString stringWithFormat:@"幻影 v%@ · 日志", PH_VERSION], 16, PH_TEXT, YES);
+        t.frame = CGRectMake(16, 14, pw - 32, 22);
         [card addSubview:t];
 
-        UILabel *st = [[UILabel alloc] initWithFrame:CGRectMake(16, 40, pw - 32, 18)];
-        st.font = [UIFont systemFontOfSize:12];
-        st.textColor = [UIColor colorWithWhite:1.0 alpha:0.62];
-        st.text = [NSString stringWithFormat:@"IOKit=%@ · hook0=%d hook1=%d hook2=%d",
-                   g_iokitReady ? @"就绪" : @"不可用",
-                   g_c0 != NULL, g_c1 != NULL, g_c2 != NULL];
+        UILabel *st = PHLabel([NSString stringWithFormat:@"IOKit=%@ · 任务 %lu 个",
+                               g_iokitReady ? @"就绪" : @"不可用", (unsigned long)PHActions().count],
+                              12, PH_DIM, NO);
+        st.frame = CGRectMake(16, 40, pw - 32, 18);
         [card addSubview:st];
-        g_panelState = st;
 
         UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(12, 64, pw - 24, ph - 64 - 60)];
-        tv.font = [UIFont fontWithName:@"Menlo" size:10.5] ?: [UIFont systemFontOfSize:10.5];
+        tv.font = [UIFont fontWithName:@"Menlo" size:10] ?: [UIFont systemFontOfSize:10];
         tv.textColor = [UIColor colorWithWhite:1.0 alpha:0.88];
         tv.backgroundColor = [UIColor colorWithWhite:0 alpha:0.35];
         tv.layer.cornerRadius = 8;
         tv.editable = NO;
-        NSString *log = [NSString stringWithContentsOfFile:g_logPath encoding:NSUTF8StringEncoding error:nil];
-        tv.text = log ?: @"(日志为空)";
+        tv.text = [NSString stringWithContentsOfFile:g_logPath encoding:NSUTF8StringEncoding error:nil] ?: @"(空)";
         [tv scrollRangeToVisible:NSMakeRange(tv.text.length, 0)];
         [card addSubview:tv];
-        g_panelLog = tv;
+        g_logView = tv;
 
         CGFloat bw = (pw - 14 * 2 - 10) / 2.0;
-        UIButton *copy = [UIButton buttonWithType:UIButtonTypeCustom];
+        UIButton *copy = PHFootButton(@"📋 复制日志", NO, bw);
         copy.frame = CGRectMake(14, ph - 16 - 40, bw, 40);
-        copy.backgroundColor = [UIColor colorWithRed:0.227 green:0.227 blue:0.235 alpha:1.0];
-        copy.layer.cornerRadius = 10;
-        [copy setTitle:@"📋 复制日志" forState:UIControlStateNormal];
-        copy.titleLabel.font = [UIFont systemFontOfSize:14];
-        [copy addTarget:[PhantomActions class] action:@selector(onCopy)
-       forControlEvents:UIControlEventTouchUpInside];
+        [copy addTarget:[PHLogActions class] action:@selector(onCopy) forControlEvents:UIControlEventTouchUpInside];
         [card addSubview:copy];
-
-        UIButton *rerun = [UIButton buttonWithType:UIButtonTypeCustom];
-        rerun.frame = CGRectMake(14 + bw + 10, ph - 16 - 40, bw, 40);
-        rerun.backgroundColor = [UIColor whiteColor];
-        rerun.layer.cornerRadius = 10;
-        [rerun setTitle:@"▶ 重新验证" forState:UIControlStateNormal];
-        rerun.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-        [rerun addTarget:[PhantomActions class] action:@selector(onRerun)
-       forControlEvents:UIControlEventTouchUpInside];
-        [card addSubview:rerun];
+        UIButton *close = PHFootButton(@"关闭", YES, bw);
+        close.frame = CGRectMake(14 + bw + 10, ph - 16 - 40, bw, 40);
+        [close addTarget:[PHLogActions class] action:@selector(onClose) forControlEvents:UIControlEventTouchUpInside];
+        [card addSubview:close];
 
         w.hidden = NO;
-        PLog(@"panel shown");
-    } @catch (NSException *e) { PLog(@"panel exception: %@", e); }
+        PLog(@"log panel shown");
+    } @catch (NSException *e) { PLog(@"log panel exception: %@", e); }
 }
 
-// ---------------- 自测（模拟器 e2e） ----------------
+#pragma mark - 自测（模拟器 e2e）
+
 static int g_stPass = 0, g_stFail = 0;
 static NSMutableString *g_stLog = nil;
-#define PH_CHECK(cond, name) do { \
-    if (cond) { g_stPass++; stWrite([NSString stringWithFormat:@"PASS %@", (name)]); } \
-    else { g_stFail++; stWrite([NSString stringWithFormat:@"FAIL %@", (name)]); } \
-} while (0)
+
 static void stWrite(NSString *line) {
     PLog(@"selftest: %@", line);
     if (!g_stLog) g_stLog = [NSMutableString string];
     [g_stLog appendFormat:@"%@\n", line];
 }
+#define PH_CHECK(cond, name) do { \
+    if (cond) { g_stPass++; stWrite([NSString stringWithFormat:@"PASS %@", (name)]); } \
+    else { g_stFail++; stWrite([NSString stringWithFormat:@"FAIL %@", (name)]); } \
+} while (0)
 
 static void phSelftest(void) {
     if (g_stLog) return;
     g_stLog = [NSMutableString string];
     PLog(@"selftest begin");
 
-    // 真机实测口径：模拟器也能 dlopen IOKit 并解析到符号（只是 dispatch 无真实效果）
-    PH_CHECK(g_iokitReady, @"IOKit 加载流程已执行且符号解析成功");
-    PH_CHECK(g_iokitReady ? (pFingerEvent != NULL && pDispatch != NULL) : YES,
-             @"关键函数指针非空（Create/Dispatch/Finger）");
+    PH_CHECK(g_iokitReady, @"IOKit 符号解析成功");
     if (g_iokitReady) {
-        // 真正有价值的验证：事件创建参数签名是否正确（签名错会返回 NULL 或直接崩）
         CGSize S = [UIScreen mainScreen].bounds.size;
         IOHIDEventRef ev = pFingerEvent(NULL, mach_absolute_time(), 1, 2, 7,
                                         100.0f / S.width, 300.0f / S.height,
                                         0, 0.6f, 0, TRUE, TRUE, 0);
-        PH_CHECK(ev != NULL, @"合成触摸事件创建成功（参数签名正确）");
+        PH_CHECK(ev != NULL, @"合成触摸事件创建成功");
         if (ev) CFRelease(ev);
     }
-    PH_CHECK(g_ballWin != nil, @"悬浮球窗口已创建");
-    phShowPanel();
-    PH_CHECK(g_panelWin != nil && !g_panelWin.hidden, @"验证面板已显示");
-    PH_CHECK(g_panelLog != nil && g_panelLog.text.length > 0, @"面板日志视图有内容");
+    PH_CHECK(g_ballWin != nil, @"悬浮球已创建");
+
+    PHShowMenu();
+    PH_CHECK(PHIsPanelOpen(), @"主菜单面板已显示");
+    PH_CHECK(PHActions() != nil, @"任务列表可读");
+
+    for (NSInteger t = 0; t < 9; t++) [PHActions() addObject:[PHAction actionWithType:(PHActionType)t]];
+    PH_CHECK(PHActions().count >= 9, @"9 类动作都能建进任务列表");
+
+    BOOL allEditOK = YES;
+    for (NSInteger i = 0; i < 9; i++) {
+        PHShowActionEdit(i);
+        if (!PHIsPanelOpen()) { allEditOK = NO; break; }
+    }
+    PH_CHECK(allEditOK, @"9 类动作编辑卡片全部可构建");
+
+    PHShowAddAction(); PH_CHECK(PHIsPanelOpen(), @"添加动作卡片已显示");
+    PHShowSettings();  PH_CHECK(PHIsPanelOpen(), @"设置面板已显示");
+    PHShowScripts();   PH_CHECK(PHIsPanelOpen(), @"脚本管理面板已显示");
+    PHShowLogPanel();  PH_CHECK(g_logWin != nil && !g_logWin.hidden, @"日志面板已显示");
+
+    PHAction *a = PHActions()[0];
+    a.desc = @"测试描述";
+    a.pressMs = 66;
+    PHAction *b = [PHAction fromDict:[a toDict]];
+    PH_CHECK([b.desc isEqualToString:@"测试描述"] && fabs(b.pressMs - 66) < 0.01,
+             @"动作模型 JSON 往返正确");
 
     NSString *doc = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
     [g_stLog writeToFile:[doc stringByAppendingPathComponent:@"Phantom_selftest.txt"]
@@ -403,12 +293,13 @@ static void phSelftest(void) {
     stWrite([NSString stringWithFormat:@"RESULT pass=%d fail=%d", g_stPass, g_stFail]);
 }
 
-// ---------------- 入口 ----------------
+#pragma mark - 入口
+
 __attribute__((constructor))
 static void phantom_init(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-        PLog(@"Phantom v%@ 注入加载（触摸合成验证版）", PH_VERSION);
+        PLog(@"Phantom v%@ 注入加载（完整 UI 骨架版）", PH_VERSION);
         g_iokitReady = phLoadIOKit();
 
         NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
@@ -418,11 +309,7 @@ static void phantom_init(void) {
                        dispatch_get_main_queue(), ^{
             phCreateBall();
             if (selftest) { phSelftest(); return; }
-            if (!g_iokitReady) {
-                phShowBanner(@"幻影：此环境无 IOKit 真实符号（模拟器？），点球看日志");
-                return;
-            }
-            phRunVerification();
+            PHToast(@"幻影已就绪：点悬浮球打开任务面板");
         });
     });
 }

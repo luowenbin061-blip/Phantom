@@ -22,7 +22,7 @@ jobs:
             -isysroot "$SYSROOT" \
             -fobjc-arc -fvisibility=hidden -O2 \
             -install_name @rpath/Phantom_sim.dylib \
-            -o Phantom_sim.dylib Phantom.m \
+            -o Phantom_sim.dylib Phantom.m PHTheme.m PHModel.m PHUI.m -I. \
             -framework Foundation -framework UIKit \
             -framework CoreGraphics -framework QuartzCore
           file Phantom_sim.dylib
