@@ -548,7 +548,7 @@ static void phSelftest(void) {
     PH_CHECK(fabs(g_ballBody.layer.cornerRadius - 12.0) < 0.01, @"形状切方形生效");
     [udB setInteger:1 forKey:@"phantom_ball_shape"];
     PHBallRestyle();
-    PH_CHECK(fabs(g_ballBody.layer.cornerRadius - PH_BALL_SIZE / 2.0) < 0.01, @"形状切圆形生效");
+    PH_CHECK(fabs(g_ballBody.layer.cornerRadius - PH_BALL_D / 2.0) < 0.01, @"形状切圆形生效");
     [udB setObject:@"ball_icon.png" forKey:@"phantom_ball_icon"];
     PHResetBallIcon();
     PH_CHECK([udB objectForKey:@"phantom_ball_icon"] == nil, @"恢复默认图标生效");
