@@ -26,11 +26,15 @@
 + (void)onPanelClose;
 @end
 
+static void phShowBanner(NSString *text);
+static void phShowPanel(void);
+static void phRunVerification(void);
+static void phCreateBall(void);
+
 // ---------------- 日志 ----------------
 static NSString *g_logPath = nil;
 
-static void PLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1, 2);
-static void PLog(NSString *fmt, ...) {
+static void phLogLine(NSString *msg) {
     @try {
         static NSDateFormatter *df = nil;
         static dispatch_once_t once;
@@ -42,12 +46,13 @@ static void PLog(NSString *fmt, ...) {
             FILE *f = fopen(g_logPath.fileSystemRepresentation, "a");
             if (f) { fputs("---- session ----\n", f); fclose(f); }
         });
-        NSString *line = [NSString stringWithFormat:@"%@ | %@\n", [df stringFromDate:[NSDate date]], [NSString stringWithFormat:fmt, ##__VA_ARGS__]];
-        NSLog(@"[Phantom] %@", [NSString stringWithFormat:fmt, ##__VA_ARGS__]);
+        NSLog(@"[Phantom] %@", msg);
+        NSString *line = [NSString stringWithFormat:@"%@ | %@\n", [df stringFromDate:[NSDate date]], msg];
         FILE *f = fopen(g_logPath.fileSystemRepresentation, "a");
         if (f) { fputs(line.UTF8String, f); fclose(f); }
     } @catch (NSException *e) { }
 }
+#define PLog(fmt, ...) do { phLogLine([NSString stringWithFormat:(fmt), ##__VA_ARGS__]); } while (0)
 
 // ---------------- IOKit 私有符号（运行时解析） ----------------
 typedef struct CF_BRIDGED_TYPE(id) __IOHIDEvent *IOHIDEventRef;
@@ -125,7 +130,7 @@ static UIWindow *g_ballWin = nil;
 static UIWindow *g_panelWin = nil;
 static UITextView *g_panelLog = nil;
 static UILabel *g_panelState = nil;
-static CGPoint g_ballCenter = CGPointMake(26, 187);   // 左侧球中心（点击自证目标）
+static CGPoint g_ballCenter = { 26.0, 187.0 };   // 左侧球中心（点击自证目标）
 
 static void phCreateBall(void) {
     if (g_ballWin) return;
@@ -246,11 +251,6 @@ static void phShowBanner(NSString *text) {
 }
 
 // ---------------- 面板（日志视图 + 复制日志 + 重新验证） ----------------
-static void phShowPanel(void);
-static void phRunVerification(void);
-
-@interface PhantomActions : NSObject
-@end
 @implementation PhantomActions
 + (void)onBallTap { phShowPanel(); }
 + (void)onCopy { 
@@ -263,6 +263,9 @@ static void phRunVerification(void);
     });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ phRunVerification(); });
+}
++ (void)onPanelClose {
+    if (g_panelWin) { g_panelWin.hidden = YES; g_panelWin = nil; g_panelLog = nil; }
 }
 @end
 
@@ -356,12 +359,6 @@ static void phShowPanel(void) {
         PLog(@"panel shown");
     } @catch (NSException *e) { PLog(@"panel exception: %@", e); }
 }
-
-@implementation PhantomActions (Panel)
-+ (void)onPanelClose {
-    if (g_panelWin) { g_panelWin.hidden = YES; g_panelWin = nil; g_panelLog = nil; }
-}
-@end
 
 // ---------------- 自测（模拟器 e2e） ----------------
 static int g_stPass = 0, g_stFail = 0;
