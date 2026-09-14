@@ -451,7 +451,7 @@ static NSInteger g_editIndex = -1;
 + (void)onRecord    { PHToast(@"录制功能将在后续阶段接入"); }
 + (void)onSuccess   { PHToast(@"「识别成功后动作」将在识别引擎阶段接入"); }
 + (void)onDelete    {
-+    if (g_editIndex >= 0 && g_editIndex < (NSInteger)PHActions().count) {
++    if (g_editIndex >= 0 && g_editIndex < (NSInteger)[PHActions() count]) {
 +        [PHActions() removeObjectAtIndex:g_editIndex];
 +        PHSaveTasks();
     }
@@ -460,7 +460,7 @@ static NSInteger g_editIndex = -1;
 }
 
 + (void)fieldEdit:(NSString *)title hint:(NSString *)hint key:(NSString *)key {
-    PHAction *a = PHActs()[g_editIndex];
+    PHAction *a = PHActs();
     if (!a) return;
     NSString *cur = [a valueForKey:key];
     PHInputCard(title, hint, cur, ^(NSString *text) {
@@ -470,7 +470,7 @@ static NSInteger g_editIndex = -1;
     });
 }
 + (void)numEdit:(NSString *)title hint:(NSString *)hint key:(NSString *)key {
-    PHAction *a = PHActs()[g_editIndex];
+    PHAction *a = PHActs();
     if (!a) return;
     double cur = [[a valueForKey:key] doubleValue];
     PHInputCard(title, hint, [NSString stringWithFormat:@"%.1f", cur], ^(NSString *text) {
@@ -484,7 +484,7 @@ static NSInteger g_editIndex = -1;
     });
 }
 + (void)listEdit:(NSString *)title hint:(NSString *)hint key:(NSString *)key {
-    PHAction *a = PHActs()[g_editIndex];
+    PHAction *a = PHActs();
     if (!a) return;
     NSArray *cur = [a valueForKey:key];
     PHInputCard(title, hint, [cur componentsJoinedByString:@","], ^(NSString *text) {
@@ -503,13 +503,13 @@ static NSInteger g_editIndex = -1;
 // 便捷：当前编辑的动作
 PHAction *PHActs(void) {
     if (g_editIndex < 0 || g_editIndex >= (NSInteger)PHActions().count) return nil;
-    return PHActions()[g_editIndex];
+    return [PHActions() objectAtIndex:(NSUInteger)g_editIndex];
 }
 
 void PHShowActionEdit(NSInteger index) {
     if (index < 0 || index >= (NSInteger)PHActions().count) { PHShowMenu(); return; }
     g_editIndex = index;
-    PHAction *a = PHActions()[index];
+    PHAction *a = [PHActions() objectAtIndex:(NSUInteger)index];
     PHPanelBegin([NSString stringWithFormat:@"%@动作编辑", [PHAction typeName:a.type]], 0.74, YES);
 
     PHPanelSection(@"动作描述");

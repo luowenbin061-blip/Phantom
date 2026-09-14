@@ -260,6 +260,12 @@ static void phSelftest(void) {
     }
     PH_CHECK(g_ballWin != nil, @"悬浮球已创建");
 
+    // 合成点击调用链（模拟器里 dispatch 无真实效果，但要确保不崩）
+    if (g_iokitReady) {
+        phTapStrategy(0, CGPointMake(0.5, 0.5), @"自测");
+        PH_CHECK(YES, @"合成点击调用链执行完成（不崩）");
+    }
+
     PHShowMenu();
     PH_CHECK(PHIsPanelOpen(), @"主菜单面板已显示");
     PH_CHECK(PHActions() != nil, @"任务列表可读");
@@ -279,7 +285,7 @@ static void phSelftest(void) {
     PHShowScripts();   PH_CHECK(PHIsPanelOpen(), @"脚本管理面板已显示");
     PHShowLogPanel();  PH_CHECK(g_logWin != nil && !g_logWin.hidden, @"日志面板已显示");
 
-    PHAction *a = PHActions()[0];
+    PHAction *a = [PHActions() objectAtIndex:0];
     a.desc = @"测试描述";
     a.pressMs = 66;
     PHAction *b = [PHAction fromDict:[a toDict]];
