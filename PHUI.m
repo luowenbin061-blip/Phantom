@@ -274,101 +274,201 @@ void PHToast(NSString *text) {
     });
 }
 
-#pragma mark - 主菜单（任务列表 + 按钮）
+#pragma mark - 主菜单（照老贝贝主界面：标题 + 动作卡片列表 + 底部四个彩色圆按钮）
 
-static UIView *g_menuListArea = nil;
+static UIWindow     *g_mWin = nil;
+static UIView       *g_mCard = nil;
+static UIScrollView *g_mScroll = nil;
+static UIView       *g_mListHost = nil;
+static CGFloat       g_mW = 0;
 
 @interface PHMenuActions : NSObject
-+ (void)onEditRow:(UIButton *)b;
++ (void)onClose;
++ (void)onAdd;
++ (void)onDel;
++ (void)onSet;
++ (void)onRun;
++ (void)onCard:(UIButton *)b;
++ (void)onDelCard:(UIButton *)b;
 @end
 
-@implementation PHMenuActions
-+ (void)onAdd      { PHShowAddAction(); }
-+ (void)onPlay     { PHToast(PHActions().count ? @"执行引擎将在下一阶段接入" : @"任务列表是空的，先添加动作"); }
-+ (void)onSettings { PHShowSettings(); }
-+ (void)onScripts  { PHShowScripts(); }
-+ (void)onRecord   { PHToast(@"录制功能将在后续阶段接入"); }
-+ (void)onClear    { [PHActions() removeAllObjects]; PHSaveTasks(); PHShowMenu(); PHToast(@"已清空所有动作"); }
-+ (void)onEditRow:(UIButton *)b { PHShowActionEdit(b.tag - 1000); }
-@end
-
-static void PHBuildTaskList(UIView *host, CGFloat w) {
-    for (UIView *v in host.subviews) [v removeFromSuperview];
-    NSMutableArray<PHAction *> *list = PHActions();
-    if (!list.count) {
-        UILabel *l = PHLabel(@"还没有动作 —— 点下方「添加动作」开始", 13, PH_DIM, NO);
-        l.textAlignment = NSTextAlignmentCenter;
-        l.frame = CGRectMake(0, 10, w, 40);
-        [host addSubview:l];
-        host.frame = CGRectMake(host.frame.origin.x, host.frame.origin.y, w, 60);
-        return;
-    }
-    CGFloat y = 0;
-    NSInteger i = 0;
-    for (PHAction *a in list) {
-        UIView *row = [[UIView alloc] initWithFrame:CGRectMake(0, y, w, 54)];
-        row.backgroundColor = PH_FIELD;
-        row.layer.cornerRadius = 10;
-
-        UIImageView *icon = [[UIImageView alloc] initWithImage:PHIcon([PHAction typeSymbol:a.type], 18, PH_ACCENT)];
-        icon.frame = CGRectMake(12, 17, 20, 20);
-        [row addSubview:icon];
-
-        UILabel *n = PHLabel([NSString stringWithFormat:@"%ld. %@", (long)(i + 1), [PHAction typeName:a.type]], 15, PH_TEXT, YES);
-        n.frame = CGRectMake(40, 8, w - 40 - 70, 20);
-        [row addSubview:n];
-
-        UILabel *s = PHLabel(a.summary, 12, PH_DIM, NO);
-        s.frame = CGRectMake(40, 28, w - 40 - 70, 16);
-        s.lineBreakMode = NSLineBreakByTruncatingTail;
-        [row addSubview:s];
-
-        UIButton *edit = [UIButton buttonWithType:UIButtonTypeCustom];
-        edit.frame = CGRectMake(w - 66, 0, 66, 54);
-        [edit setTitle:@"编辑" forState:UIControlStateNormal];
-        [edit setTitleColor:PH_ACCENT forState:UIControlStateNormal];
-        edit.titleLabel.font = [UIFont systemFontOfSize:14];
-        edit.tag = 1000 + i;
-        [edit addTarget:[PHMenuActions class] action:@selector(onEditRow:)
-         forControlEvents:UIControlEventTouchUpInside];
-        [row addSubview:edit];
-
-        [host addSubview:row];
-        y += 58;
-        i++;
-    }
-    host.frame = CGRectMake(host.frame.origin.x, host.frame.origin.y, w, y);
+void PHCloseMenu(void) {
+    if (g_mWin) { g_mWin.hidden = YES; g_mWin = nil; g_mCard = nil; g_mScroll = nil; g_mListHost = nil; }
 }
 
-void PHShowMenu(void) {
-    PHPanelBegin(@"幻影 · 任务", 0.78, YES);
-    PHPanelSection([NSString stringWithFormat:@"动作列表（%lu）", (unsigned long)PHActions().count]);
-    UIView *host = [[UIView alloc] initWithFrame:CGRectMake(0, 0, g_pW, 60)];
-    PHPanelAdd(host, 0);
-    PHBuildTaskList(host, g_pW);
-    g_menuListArea = host;
+// 一张动作小卡片
+static UIButton *PHActionCard(PHAction *a, NSInteger idx, CGFloat w, BOOL deleteMode) {
+    UIButton *card = [UIButton buttonWithType:UIButtonTypeCustom];
+    card.frame = CGRectMake(0, 0, w, 58);
+    card.backgroundColor = [UIColor colorWithRed:0.165 green:0.165 blue:0.175 alpha:1.0];
+    card.layer.cornerRadius = 12;
+    card.tag = idx;
+    [card addTarget:[PHMenuActions class]
+             action:(deleteMode ? @selector(onDelCard:) : @selector(onCard:))
+   forControlEvents:UIControlEventTouchUpInside];
 
-    UIButton *add  = PHFootButton(@"＋ 添加动作", YES, g_pW);
-    UIButton *play = PHFootButton(@"▶ 开始执行", NO, g_pW);
-    UIButton *rec  = PHFootButton(@"● 录制", NO, g_pW);
-    UIButton *set  = PHFootButton(@"设置", NO, g_pW);
-    UIButton *scr  = PHFootButton(@"脚本文件", NO, g_pW);
-    UIButton *clr  = PHFootButton(@"清空全部", NO, g_pW);
-    [add addTarget:[PHMenuActions class] action:@selector(onAdd) forControlEvents:UIControlEventTouchUpInside];
-    [play addTarget:[PHMenuActions class] action:@selector(onPlay) forControlEvents:UIControlEventTouchUpInside];
-    [rec addTarget:[PHMenuActions class] action:@selector(onRecord) forControlEvents:UIControlEventTouchUpInside];
-    [set addTarget:[PHMenuActions class] action:@selector(onSettings) forControlEvents:UIControlEventTouchUpInside];
-    [scr addTarget:[PHMenuActions class] action:@selector(onScripts) forControlEvents:UIControlEventTouchUpInside];
-    [clr addTarget:[PHMenuActions class] action:@selector(onClear) forControlEvents:UIControlEventTouchUpInside];
-    PHPanelButtons(@[ add, play, rec ]);
-    PHPanelButtons(@[ set, scr, clr ]);
+    UIImageView *icon = [[UIImageView alloc] initWithImage:PHIcon([PHAction typeSymbol:a.type], 19, PH_ACCENT)];
+    icon.frame = CGRectMake(14, 19, 20, 20);
+    icon.userInteractionEnabled = NO;
+    [card addSubview:icon];
+
+    UILabel *n = PHLabel([NSString stringWithFormat:@"%ld. %@", (long)(idx + 1), [PHAction typeName:a.type]], 15, PH_TEXT, YES);
+    n.frame = CGRectMake(44, 9, w - 44 - 46, 20);
+    n.userInteractionEnabled = NO;
+    [card addSubview:n];
+
+    UILabel *sm = PHLabel(a.summary, 12, PH_DIM, NO);
+    sm.frame = CGRectMake(44, 30, w - 44 - 46, 16);
+    sm.lineBreakMode = NSLineBreakByTruncatingTail;
+    sm.userInteractionEnabled = NO;
+    [card addSubview:sm];
+
+    UIImageView *tail = [[UIImageView alloc] initWithImage:PHIcon(deleteMode ? @"minus.circle.fill" : @"chevron.right",
+                                                                  18, deleteMode ? PH_BTN_DEL : PH_FAINT)];
+    tail.frame = CGRectMake(w - 34, 20, 18, 18);
+    tail.userInteractionEnabled = NO;
+    [card addSubview:tail];
+    return card;
+}
+
+static void PHBuildMenuList(BOOL deleteMode) {
+    if (!g_mListHost) return;
+    for (UIView *v in g_mListHost.subviews) [v removeFromSuperview];
+    CGFloat w = g_mW;
+    NSMutableArray<PHAction *> *list = PHActions();
+    CGFloat h = 0;
+    if (!list.count) {
+        UILabel *l = PHLabel(@"还没有动作\n点下方蓝色 ＋ 添加", 14, PH_DIM, NO);
+        l.textAlignment = NSTextAlignmentCenter;
+        l.numberOfLines = 2;
+        l.frame = CGRectMake(0, 34, w, 56);
+        [g_mListHost addSubview:l];
+        h = 124;
+    } else {
+        NSInteger i = 0;
+        for (PHAction *a in list) {
+            UIButton *card = PHActionCard(a, i, w, deleteMode);
+            card.frame = CGRectMake(0, h, w, 58);
+            [g_mListHost addSubview:card];
+            h += 64;
+            i++;
+        }
+        h = MAX(h, 124);
+    }
+    CGRect f = g_mListHost.frame;
+    g_mListHost.frame = CGRectMake(f.origin.x, f.origin.y, w, h);
+    if (g_mScroll) g_mScroll.contentSize = CGSizeMake(w, h);
+}
+
+static void PHBuildMenuWindow(BOOL deleteMode) {
+    PHCloseMenu();
+    PHClosePanel();
+    UIWindowScene *scene = nil;
+    for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
+        if ([sc isKindOfClass:[UIWindowScene class]] &&
+            sc.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)sc; break; }
+    }
+    if (!scene) return;
+    CGSize S = scene.screen.bounds.size;
+
+    UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
+    w.frame = CGRectMake(0, 0, S.width, S.height);
+    w.windowLevel = UIWindowLevelAlert + 95;
+    w.backgroundColor = [UIColor colorWithWhite:0 alpha:0.30];
+    w.userInteractionEnabled = YES;
+    g_mWin = w;
+
+    UIControl *mask = [[UIControl alloc] initWithFrame:w.bounds];
+    [mask addTarget:[PHMenuActions class] action:@selector(onClose)
+   forControlEvents:UIControlEventTouchUpInside];
+    [w addSubview:mask];
+
+    CGFloat pw = round(S.width * 0.88);
+    CGFloat hdrH = 54, barH = 80;
+    CGFloat listMax = S.height * 0.62;
+    (void)listMax;
+    // 先按内容估高，再定最大
+    CGFloat contentH = 0;
+    if (PHActions().count) contentH = PHActions().count * 64;
+    else contentH = 124;
+    CGFloat listH = MIN(contentH, S.height * 0.60);
+    CGFloat ph = hdrH + listH + barH;
+
+    UIView *card = [[UIView alloc] initWithFrame:CGRectMake((S.width - pw) / 2.0, (S.height - ph) / 2.0, pw, ph)];
+    card.backgroundColor = [UIColor colorWithRed:0.086 green:0.086 blue:0.094 alpha:0.98];
+    card.layer.cornerRadius = 18;
+    card.clipsToBounds = YES;
+    [w addSubview:card];
+    g_mCard = card;
+    g_mW = pw - 24;
+
+    // 标题（青色）+ 右上白色圆 ✕
+    UILabel *t = PHLabel([NSString stringWithFormat:@"幻影 Phantom v%@", PH_VERSION], 17, PH_TITLE_GREEN, YES);
+    t.frame = CGRectMake(18, 0, pw - 18 - 52, hdrH);
+    [card addSubview:t];
+    UIButton *cl = PHCloseButton(30);
+    cl.frame = CGRectMake(pw - 30 - 14, (hdrH - 30) / 2.0, 30, 30);
+    [cl addTarget:[PHMenuActions class] action:@selector(onClose) forControlEvents:UIControlEventTouchUpInside];
+    [card addSubview:cl];
+    [card addSubview:PHHairline(pw, hdrH)];
+
+    // 动作卡片列表
+    UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(12, hdrH + 12, g_mW, listH - 12)];
+    sv.showsVerticalScrollIndicator = NO;
+    [card addSubview:sv];
+    g_mScroll = sv;
+    UIView *host = [[UIView alloc] initWithFrame:CGRectMake(0, 0, g_mW, contentH)];
+    [sv addSubview:host];
+    g_mListHost = host;
+
+    // 底部按钮栏（深灰条 + 四个彩色圆按钮）
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, ph - barH, pw, barH)];
+    bar.backgroundColor = PH_BAR;
+    [card addSubview:bar];
+
+    CGFloat bsz = 50;
+    CGFloat gap = (pw - 4 * bsz) / 5.0;
+    NSArray *symbols = @[ @"plus", @"minus", @"ellipsis", @"play.fill" ];
+    NSArray *colors  = @[ PH_BTN_ADD, PH_BTN_DEL, PH_BTN_SET, PH_BTN_RUN ];
+    NSArray *sels    = @[ @"onAdd", @"onDel", @"onSet", @"onRun" ];
+    for (NSInteger i = 0; i < 4; i++) {
+        UIButton *b = PHCircleButton(symbols[i], colors[i], bsz);
+        b.frame = CGRectMake(gap * (i + 1) + bsz * i, (barH - bsz) / 2.0, bsz, bsz);
+        [b addTarget:[PHMenuActions class] action:NSSelectorFromString(sels[i])
+    forControlEvents:UIControlEventTouchUpInside];
+        [bar addSubview:b];
+    }
+
+    PHBuildMenuList(deleteMode);
+    w.hidden = NO;
+}
+
+@implementation PHMenuActions
++ (void)onClose    { PHCloseMenu(); }
++ (void)onAdd      { PHShowAddAction(); }
++ (void)onDel      { PHBuildMenuWindow(YES); PHToast(@"点动作卡片即删除"); }
++ (void)onSet      { PHShowSettings(); }
++ (void)onRun      { PHToast(PHActions().count ? @"执行引擎将在下一阶段接入" : @"先点蓝色 ＋ 添加动作"); }
++ (void)onCard:(UIButton *)b    { PHShowActionEdit(b.tag); }
++ (void)onDelCard:(UIButton *)b {
+    NSInteger i = b.tag;
+    if (i >= 0 && i < (NSInteger)[PHActions() count]) {
+        NSString *name = [PHAction typeName:[PHActions() objectAtIndex:(NSUInteger)i].type];
+        [PHActions() removeObjectAtIndex:(NSUInteger)i];
+        PHSaveTasks();
+        PHToast([NSString stringWithFormat:@"已删除：%@", name]);
+    }
+    PHBuildMenuWindow(YES);
+}
+@end
+
+void PHShowMenu(void) {
+    if (g_mWin) { PHCloseMenu(); return; }   // 再点一次收起
+    PHBuildMenuWindow(NO);
 }
 
 void PHRefreshMenuIfVisible(void) {
-    if (g_menuListArea && g_pScroll) {
-        PHBuildTaskList(g_menuListArea, g_pW);
-        g_pScroll.contentSize = CGSizeMake(g_pW, g_pY);
-    }
+    if (g_mWin && g_mListHost) PHBuildMenuList(NO);
 }
 
 #pragma mark - 添加动作卡片（9 项）

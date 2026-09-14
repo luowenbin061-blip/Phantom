@@ -16,8 +16,6 @@
 #import <stdatomic.h>
 #import "PH.h"
 
-#define PH_VERSION @"0.2"
-
 static void PHShowLogPanel(void);
 
 #pragma mark - 日志
@@ -121,27 +119,56 @@ static void phCreateBall(void) {
     if (!scene) { PLog(@"ball: no scene"); return; }
     CGSize S = scene.screen.bounds.size;
 
+    CGFloat ballSize = 46.0;
+    CGFloat pad = 9.0;                       // 给投影留边
+    CGFloat winSize = ballSize + pad * 2;
+
     UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
-    w.frame = CGRectMake(6, S.height * 0.19, 44, 44);
+    w.frame = CGRectMake(6, S.height * 0.19, winSize, winSize);
     w.windowLevel = UIWindowLevelAlert + 90;
     w.backgroundColor = [UIColor clearColor];
     w.userInteractionEnabled = YES;
     g_ballWin = w;
 
+    // 外圈：只做投影
+    UIView *host = [[UIView alloc] initWithFrame:CGRectMake(pad, pad, ballSize, ballSize)];
+    host.backgroundColor = [UIColor clearColor];
+    host.layer.shadowColor = [UIColor blackColor].CGColor;
+    host.layer.shadowOpacity = 0.38;
+    host.layer.shadowRadius = 7.0;
+    host.layer.shadowOffset = CGSizeMake(0, 2);
+    [w addSubview:host];
+
+    // 球体：毛玻璃 + 细白边
+    UIView *ball = [[UIView alloc] initWithFrame:host.bounds];
+    ball.layer.cornerRadius = ballSize / 2.0;
+    ball.clipsToBounds = YES;
+    ball.layer.borderWidth = 1.0;
+    ball.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.22].CGColor;
+    [host addSubview:ball];
+
+    UIVisualEffectView *blur = [[UIVisualEffectView alloc]
+        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+    blur.frame = ball.bounds;
+    [ball addSubview:blur];
+
+    // 图标（连点手势）
+    UIImageView *icon = [[UIImageView alloc] initWithImage:PHIcon(@"hand.tap.fill", 21, [UIColor colorWithWhite:1.0 alpha:0.95])];
+    icon.frame = CGRectMake((ballSize - 24) / 2.0, (ballSize - 24) / 2.0, 24, 24);
+    [ball addSubview:icon];
+
+    // 点击层
     UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
-    b.frame = w.bounds;
-    b.backgroundColor = [UIColor colorWithRed:0.10 green:0.30 blue:0.28 alpha:0.60];
-    b.layer.borderWidth = 1.0;
-    b.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.45].CGColor;
-    b.clipsToBounds = YES;
-    [b setTitle:@"幻" forState:UIControlStateNormal];
-    b.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    b.frame = ball.bounds;
+    b.backgroundColor = [UIColor clearColor];
     [b addTarget:[PHBallActions class] action:@selector(onTap) forControlEvents:UIControlEventTouchUpInside];
     [b addTarget:[PHBallActions class] action:@selector(onLong)
 forControlEvents:UIControlEventTouchDownRepeat];
-    [w addSubview:b];
+    [ball addSubview:b];
+
     w.hidden = NO;
-    PLog(@"phantom ball created at (%.0f, %.0f)", w.frame.origin.x, w.frame.origin.y);
+    PLog(@"phantom ball created at (%.0f, %.0f) 直径%.0f（毛玻璃圆球）",
+         w.frame.origin.x, w.frame.origin.y, ballSize);
 }
 
 #pragma mark - 日志面板（长按球打开）
@@ -305,7 +332,7 @@ __attribute__((constructor))
 static void phantom_init(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-        PLog(@"Phantom v%@ 注入加载（完整 UI 骨架版）", PH_VERSION);
+        PLog(@"Phantom v%@ 注入加载（完整 UI + 主面板重做）", PH_VERSION);
         g_iokitReady = phLoadIOKit();
 
         NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];

@@ -109,3 +109,15 @@ UIImage *PHIcon(NSString *symbolName, CGFloat size, UIColor *tint) {
     UIImage *img = [UIImage systemImageNamed:symbolName withConfiguration:cfg];
     return tint ? [img imageWithTintColor:tint renderingMode:UIImageRenderingModeAlwaysOriginal] : img;
 }
+
+UIButton *PHCircleButton(NSString *symbol, UIColor *bg, CGFloat size) {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+    b.frame = CGRectMake(0, 0, size, size);
+    b.backgroundColor = bg;
+    b.layer.cornerRadius = size / 2.0;
+    b.tintColor = [UIColor whiteColor];
+    UIImageConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:size * 0.42
+                                                                                weight:UIImageSymbolWeightBold];
+    [b setImage:[UIImage systemImageNamed:symbol withConfiguration:cfg] forState:UIControlStateNormal];
+    return b;
+}
