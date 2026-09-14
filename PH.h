@@ -3,7 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
-#define PH_VERSION @"0.5"   // 幻影版本（跟手拖动/收纳条/毛玻璃小卡片）
+#define PH_VERSION @"0.6"   // 幻影版本（吸附修复/收纳条/20秒空闲收纳）
 
 #pragma mark - 主题
 #define PH_BG      [UIColor colorWithRed:0.173 green:0.173 blue:0.180 alpha:0.95]   // #2C2C2E 面板底
@@ -111,3 +111,4 @@ void PHRefreshBall(void);                      // 按当前设置重建悬浮球
 void PHBallApplyLayout(void);                  // 设置变更后立即应用（形状+吸附）
 void PHShowIconPicker(void);                   // 打开相册选悬浮球图标
 void PHResetBallIcon(void);                    // 恢复默认图标
+void PHBallNotifyActivity(void);                // 通知"有操作"（展开 + 重排 20 秒收纳计时）

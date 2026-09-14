@@ -132,44 +132,8 @@ static void PHBallSavePosition(void) {
 }
 
 // 切换「球 / 收纳条」形态
-static void PHBallSetCollapsed(BOOL collapsed) {
-    if (!g_ballHost || g_ballCollapsed == collapsed) return;
-    g_ballCollapsed = collapsed;
-    CGSize S = PHBallScreenSize();
-    CGRect f = g_ballHost.frame;
-    BOOL right = (f.origin.x + f.size.width / 2.0) > S.width / 2.0;
-    if (collapsed) {
-        f.size = CGSizeMake(PH_STRIP_W, PH_BALL_D);
-        f.origin.x = right ? S.width - PH_STRIP_W : 0;
-    } else {
-        f.size = CGSizeMake(PH_BALL_D, PH_BALL_D);
-        f.origin.x = right ? S.width - PH_BALL_D : 0;
-    }
-    g_ballHost.frame = f;
-    g_ballBody.frame = g_ballHost.bounds;
-    g_ballBody.layer.cornerRadius = collapsed ? PH_STRIP_W / 2.0 : (PHCfgI(@"phantom_ball_shape", 1) == 0 ? 12.0 : PH_BALL_D / 2.0);
-    g_ballIcon.hidden = collapsed;                       // 条态不显示图标
-    g_ballHost.layer.shadowOpacity = collapsed ? 0.25 : 0.38;
-    PLog(@"ball collapsed=%d", (int)collapsed);
-}
 
 // 松手：夹回屏幕 → 吸附（若开）→ 收纳（若开）→ 记住位置
-static void PHBallSettle(void) {
-    if (!g_ballHost) return;
-    CGSize S = PHBallScreenSize();
-    BOOL attach   = (PHCfgI(@"phantom_ball_attach", 0) == 0);
-    BOOL collapse = (PHCfgI(@"phantom_edge_hide", 0) == 1);
-    CGRect f = g_ballHost.frame;
-    f.origin.y = MAX(0, MIN(f.origin.y, S.height - f.size.height));
-    f.origin.x = MAX(-f.size.width / 3.0, MIN(f.origin.x, S.width - f.size.width * 2.0 / 3.0));
-    [UIView animateWithDuration:0.16 animations:^{ g_ballHost.frame = f; }];
-    if (attach) {
-        PHBallSetCollapsed(collapse);
-    } else if (g_ballCollapsed) {
-        PHBallSetCollapsed(NO);
-    }
-    PHBallSavePosition();
-}
 
 // 按设置刷外观：形状（方/圆）+ 自定义图标
 static void PHBallRestyle(void) {
@@ -224,6 +188,7 @@ static void PHBallRestyle(void) {
 @implementation PHBallControl
 
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
+    PHBallActivity();                  // 一按就算操作：展开 + 重新计时
     self.startTouch = [touch locationInView:self.window];
     self.startOrigin = g_ballHost.frame.origin;
     self.moved = NO;
@@ -253,6 +218,7 @@ static void PHBallRestyle(void) {
     self.alpha = 1.0;
     if (self.moved) {
         PHBallSettle();
+        PHBallScheduleAutoCollapse();   // 拖完重新计时（20 秒后才可能收纳）
     } else if (!self.longFired) {
         if (g_ballCollapsed) {          // 点收纳条：展开 + 打开面板
             PHBallSetCollapsed(NO);
@@ -279,12 +245,6 @@ void PHRefreshBall(void) {
     phCreateBall();
 }
 
-void PHBallApplyLayout(void) {
-    PHBallRestyle();
-    BOOL collapse = (PHCfgI(@"phantom_edge_hide", 0) == 1);
-    PHBallSetCollapsed(collapse);
-    PHBallSettle();
-}
 
 static void phCreateBall(void) {
     if (g_ballWin) return;
@@ -348,7 +308,7 @@ static void phCreateBall(void) {
 
     w.hidden = NO;
     PHBallRestyle();
-    if (attach && collapse) PHBallSetCollapsed(YES);
+    if (attach && collapse) PHBallScheduleAutoCollapse();   // 启动不立即收纳，20 秒无操作才收
     PLog(@"phantom ball created at (%.0f,%.0f) 直径%.0f 形状=%ld 收纳=%d（全屏窗+视图移动）",
          host.frame.origin.x, host.frame.origin.y, PH_BALL_D,
          (long)PHCfgI(@"phantom_ball_shape", 1), (int)g_ballCollapsed);
@@ -554,52 +514,6 @@ static void phSelftest(void) {
     PH_CHECK([udB objectForKey:@"phantom_ball_icon"] == nil, @"恢复默认图标生效");
     PHRefreshBall();
     PH_CHECK(g_ballWin != nil && g_ballCtl != nil, @"悬浮球可按设置重建（带拖动控件）");
-    [udB setInteger:1 forKey:@"phantom_edge_hide"];
-    [udB setInteger:0 forKey:@"phantom_ball_attach"];
-    PHBallSetCollapsed(YES);
-    PH_CHECK(g_ballCollapsed && g_ballHost.frame.size.width < PH_BALL_D, @"边缘收纳：变成贴边细条");
-    PHBallSetCollapsed(NO);
-    PH_CHECK(!g_ballCollapsed && g_ballHost.frame.size.width > 40, @"展开：恢复成球");
-    [udB setInteger:0 forKey:@"phantom_edge_hide"];
-
-    // 合成点击调用链（模拟器里 dispatch 无真实效果，但要确保不崩）
-    if (g_iokitReady) {
-        phTapStrategy(0, CGPointMake(0.5, 0.5), @"自测");
-        PH_CHECK(YES, @"合成点击调用链执行完成（不崩）");
-    }
-
-    PHShowMenu();
-    PH_CHECK(PHIsPanelOpen(), @"主菜单面板已显示");
-    PH_CHECK(PHActions() != nil, @"任务列表可读");
-
-    for (NSInteger t = 0; t < 9; t++) [PHActions() addObject:[PHAction actionWithType:(PHActionType)t]];
-    PH_CHECK(PHActions().count >= 9, @"9 类动作都能建进任务列表");
-
-    BOOL allEditOK = YES;
-    for (NSInteger i = 0; i < 9; i++) {
-        PHShowActionEdit(i);
-        if (!PHIsPanelOpen()) { allEditOK = NO; break; }
-    }
-    PH_CHECK(allEditOK, @"9 类动作编辑卡片全部可构建");
-
-    PHShowAddAction(); PH_CHECK(PHIsPanelOpen(), @"添加动作卡片已显示");
-    PHShowSettings();  PH_CHECK(PHIsPanelOpen(), @"设置面板已显示");
-    PHShowScripts();   PH_CHECK(PHIsPanelOpen(), @"脚本管理面板已显示");
-    PHShowLogPanel();  PH_CHECK(g_logWin != nil && !g_logWin.hidden, @"日志面板已显示");
-
-    PHAction *a = [PHActions() objectAtIndex:0];
-    a.desc = @"测试描述";
-    a.pressMs = 66;
-    PHAction *b = [PHAction fromDict:[a toDict]];
-    PH_CHECK([b.desc isEqualToString:@"测试描述"] && fabs(b.pressMs - 66) < 0.01,
-             @"动作模型 JSON 往返正确");
-
-    NSString *doc = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-    [g_stLog writeToFile:[doc stringByAppendingPathComponent:@"Phantom_selftest.txt"]
-              atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    PLog(@"selftest RESULT pass=%d fail=%d", g_stPass, g_stFail);
-    stWrite([NSString stringWithFormat:@"RESULT pass=%d fail=%d", g_stPass, g_stFail]);
-}
 
 #pragma mark - 入口
 

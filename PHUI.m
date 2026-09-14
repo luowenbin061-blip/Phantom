@@ -301,6 +301,7 @@ void PHToast(NSString *text) {
 
 void PHCloseMenu(void) {
     if (g_mWin) { g_mWin.hidden = YES; g_mWin = nil; g_mCard = nil; g_mScroll = nil; g_mListHost = nil; }
+    PHBallNotifyActivity();      // 关面板也算一次操作（重排 20 秒收纳计时）
 }
 
 // 一张动作小卡片
@@ -467,6 +468,7 @@ static void PHBuildMenuWindow(BOOL deleteMode) {
 @end
 
 void PHShowMenu(void) {
+    PHBallNotifyActivity();                  // 开面板算一次操作
     if (g_mWin) { PHCloseMenu(); return; }   // 再点一次收起
     PHBuildMenuWindow(NO);
 }
