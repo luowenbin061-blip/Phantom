@@ -3,7 +3,7 @@ name: simtest
 on:
   push:
     branches: [main]
-    paths: ['Phantom.m', 'TestHost/**', '.github/workflows/simtest.yml']
+    paths: ['*.m', '*.h', 'TestHost/**', '.github/workflows/simtest.yml']   # 多文件源码都要触发
   workflow_dispatch:
 
 jobs:
