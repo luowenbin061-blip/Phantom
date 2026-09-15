@@ -47,15 +47,24 @@ static void phLogLine(NSString *msg) {
 typedef struct CF_BRIDGED_TYPE(id) __IOHIDEvent *IOHIDEventRef;
 typedef struct CF_BRIDGED_TYPE(id) __IOHIDEventSystemClient *IOHIDEventSystemClientRef;
 
+// 公开签名里 x/y/z/pressure/twist 是 double；社区也有按 float 调用的版本 —— 两种都留，做对照
+typedef IOHIDEventRef (*PFFingerFloat)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, uint32_t,
+                                       float, float, float, float, float, Boolean, Boolean, uint32_t);
+typedef IOHIDEventRef (*PFFingerDouble)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, uint32_t,
+                                        double, double, double, double, double, Boolean, Boolean, uint32_t);
+
 static IOHIDEventSystemClientRef (*pCreate)(CFAllocatorRef);
 static IOHIDEventSystemClientRef (*pCreateWithType)(CFAllocatorRef, int32_t, void *);
 static void (*pDispatch)(IOHIDEventSystemClientRef, IOHIDEventRef);
-static IOHIDEventRef (*pFingerEvent)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, uint32_t,
-                                     float, float, float, float, float, Boolean, Boolean, uint32_t);
+static void (*pSchedule)(IOHIDEventSystemClientRef, CFRunLoopRef, CFStringRef);
+static PFFingerFloat  pFingerFloat  = NULL;
+static PFFingerDouble pFingerDouble = NULL;
 
 static IOHIDEventSystemClientRef g_c0 = NULL, g_c1 = NULL, g_c2 = NULL;
+static IOHIDEventSystemClientRef g_cHID = NULL, g_cAdmin = NULL;
 static BOOL g_iokitReady = NO;
 static atomic_int g_tapBusy = 0;
+static atomic_int g_touchSeen = 0;    // 探针：悬浮球收到触摸的次数（合成触摸到没到，看它）
 
 static BOOL phLoadIOKit(void) {
     void *h = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW);
@@ -64,10 +73,12 @@ static BOOL phLoadIOKit(void) {
     pCreate         = dlsym(h, "IOHIDEventSystemClientCreate");
     pCreateWithType = dlsym(h, "IOHIDEventSystemClientCreateWithType");
     pDispatch       = dlsym(h, "IOHIDEventSystemClientDispatchEvent");
-    pFingerEvent    = dlsym(h, "IOHIDEventCreateDigitizerFingerEvent");
-    PLog(@"符号解析：Create=%p CreateWithType=%p Dispatch=%p Finger=%p",
-         pCreate, pCreateWithType, pDispatch, pFingerEvent);
-    return (pCreate && pDispatch && pFingerEvent);
+    pSchedule       = dlsym(h, "IOHIDEventSystemClientScheduleWithRunLoop");
+    pFingerFloat    = (PFFingerFloat)dlsym(h, "IOHIDEventCreateDigitizerFingerEvent");
+    pFingerDouble   = (PFFingerDouble)dlsym(h, "IOHIDEventCreateDigitizerFingerEvent");
+    PLog(@"符号解析：Create=%p CreateWithType=%p Dispatch=%p Schedule=%p Finger=%p",
+         pCreate, pCreateWithType, pDispatch, pSchedule, pFingerFloat);
+    return (pCreate && pDispatch && pFingerFloat);
 }
 
 // 合成一次点击（归一化坐标 0~1）；策略 0/1/2 = 三种 client 创建方式
@@ -84,8 +95,8 @@ static void phTapStrategy(int strategy, CGPoint ptNorm, NSString *tag) {
             IOHIDEventSystemClientRef c = (strategy == 0) ? g_c0 : (strategy == 1 ? g_c1 : g_c2);
             if (!c) { PLog(@"[%@] client 为空", tag); return; }
             uint64_t t = mach_absolute_time();
-            IOHIDEventRef down = pFingerEvent(NULL, t, 1, 2, 7, ptNorm.x, ptNorm.y, 0, 0.62f, 0, TRUE, TRUE, 0);
-            IOHIDEventRef up   = pFingerEvent(NULL, t + 1, 1, 2, 3, ptNorm.x, ptNorm.y, 0, 0.0f, 0, FALSE, FALSE, 0);
+            IOHIDEventRef down = pFingerFloat(NULL, t, 1, 2, 7, ptNorm.x, ptNorm.y, 0, 0.62f, 0, TRUE, TRUE, 0);
+            IOHIDEventRef up   = pFingerFloat(NULL, t + 1, 1, 2, 3, ptNorm.x, ptNorm.y, 0, 0.0f, 0, FALSE, FALSE, 0);
             if (!down || !up) { PLog(@"[%@] 事件创建失败", tag); return; }
             pDispatch(c, down);
             [NSThread sleepForTimeInterval:0.08];
@@ -287,6 +298,12 @@ static void PHBallRestyle(void) {
 
 @implementation PHBallControl
 
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    atomic_fetch_add(&g_touchSeen, 1);            // 探针：合成触摸有没有真的到达球
+    PLog(@"ball 收到触摸（touchesBegan）");
+    [super touchesBegan:touches withEvent:event];
+}
+
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
     PHBallActivity();                  // 一按就算操作：展开 + 重新计时
     self.startTouch = [touch locationInView:self.window];
@@ -415,7 +432,7 @@ static void phCreateBall(void) {
          (long)PHCfgI(@"phantom_ball_shape", 1), (int)g_ballCollapsed);
 }
 
-#pragma mark - 触摸合成自检（真机 go/no-go：假手指系统认不认）
+#pragma mark - 触摸合成自检（对照诊断：6 组变量组合，一次试完）
 
 static BOOL g_tapTesting = NO;
 static NSMutableArray<NSString *> *g_tapResults = nil;
@@ -428,112 +445,121 @@ static CGPoint PHBallCenterNormalized(void) {
                        (f.origin.y + f.size.height / 2.0) / S.height);
 }
 
-// 用 3 种方式（策略A/B/C）依次点自己的悬浮球：
-// 球被点开（面板弹出）= 那种方式系统认 → 就是能用的合成触摸
+// 一组变量组合：签名口径 × 坐标口径 × client 类型 × 是否调度 runloop
+typedef struct {
+    const char *name;
+    BOOL useDouble;
+    BOOL normalized;
+    int  clientKind;      // 0=Create, 1=CreateWithType(HID=1), 2=CreateWithType(Admin=0)
+    BOOL schedule;
+} PHTapVariant;
+
+static const PHTapVariant kTapVariants[] = {
+    {"A_double+归一化+Create+调度",   YES, YES, 0, YES},
+    {"B_float +归一化+Create+调度",   NO,  YES, 0, YES},
+    {"C_double+点坐标+Create+调度",   YES, NO,  0, YES},
+    {"D_double+归一化+HID+调度",      YES, YES, 1, YES},
+    {"E_double+归一化+Create无调度",  YES, YES, 0, NO},
+    {"F_double+点坐标+HID+调度",      YES, NO,  1, YES},
+};
+#define PH_VARIANT_COUNT (sizeof(kTapVariants) / sizeof(kTapVariants[0]))
+
+static IOHIDEventSystemClientRef PHClientForKind(int kind) {
+    @try {
+        if (kind == 1) {
+            if (!g_cHID && pCreateWithType) g_cHID = pCreateWithType(CFAllocatorGetDefault(), 1, NULL);
+            return g_cHID;
+        }
+        if (kind == 2) {
+            if (!g_cAdmin && pCreateWithType) g_cAdmin = pCreateWithType(CFAllocatorGetDefault(), 0, NULL);
+            return g_cAdmin;
+        }
+        if (!g_c0 && pCreate) g_c0 = pCreate(CFAllocatorGetDefault());
+        return g_c0;
+    } @catch (NSException *e) { PLog(@"client(%d) 异常: %@", kind, e); return NULL; }
+}
+
+// 按一组变量发一次点击；返回 NO = 事件没造出来
+static BOOL PHFireVariant(const PHTapVariant *v, CGPoint ptPts, NSString *tag) {
+    IOHIDEventSystemClientRef c = PHClientForKind(v->clientKind);
+    if (!c) { PLog(@"[%@] client 为空", tag); return NO; }
+    if (v->schedule && pSchedule) {
+        @try { pSchedule(c, CFRunLoopGetMain(), kCFRunLoopDefaultMode); } @catch (NSException *e) { }
+    }
+    CGSize S = PHBallScreenSize();
+    double x = v->normalized ? (ptPts.x / S.width)  : ptPts.x;
+    double y = v->normalized ? (ptPts.y / S.height) : ptPts.y;
+    IOHIDEventRef down = NULL, up = NULL;
+    if (v->useDouble && pFingerDouble) {
+        down = pFingerDouble(NULL, mach_absolute_time(), 1, 2, 7, x, y, 0.0, 0.62, 0.0, TRUE, TRUE, 0);
+        usleep(60000);
+        up   = pFingerDouble(NULL, mach_absolute_time(), 1, 2, 3, x, y, 0.0, 0.0, 0.0, FALSE, FALSE, 0);
+    } else if (pFingerFloat) {
+        down = pFingerFloat(NULL, mach_absolute_time(), 1, 2, 7, (float)x, (float)y, 0, 0.62f, 0, TRUE, TRUE, 0);
+        usleep(60000);
+        up   = pFingerFloat(NULL, mach_absolute_time(), 1, 2, 3, (float)x, (float)y, 0, 0.0f, 0, FALSE, FALSE, 0);
+    }
+    if (!down || !up) { PLog(@"[%@] 事件创建失败", tag); return NO; }
+    pDispatch(c, down);
+    usleep(60000);
+    pDispatch(c, up);
+    PLog(@"[%@] 已派发（%s，x=%.4f y=%.4f，client=%d，调度=%d）", tag,
+         v->useDouble ? "double" : "float", x, y, v->clientKind, (int)v->schedule);
+    return YES;
+}
+
+// 自检：6 组组合依次点自己的悬浮球；球弹开=点击成功，只有触摸计数涨=触摸到了但没触发
 void PHTestSyntheticTap(void) {
     if (g_tapTesting) { PHToast(@"自检正在进行，稍等…"); return; }
     if (!g_iokitReady) { PHToast(@"IOKit 未就绪，无法自检"); return; }
     g_tapTesting = YES;
     if (!g_tapResults) g_tapResults = [NSMutableArray array];
     [g_tapResults removeAllObjects];
-    PLog(@"===== 触摸合成自检开始（3 种方式各点一次悬浮球）=====");
-    PHToast(@"自检开始：约 8 秒，期间别碰屏幕");
+    PLog(@"===== 触摸合成对照自检开始（%lu 组组合）=====", (unsigned long)PH_VARIANT_COUNT);
+    PHToast(@"对照自检开始：约 20 秒，期间别碰屏幕");
 
-    for (int i = 0; i < 3; i++) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((1.0 + i * 2.5) * NSEC_PER_SEC)),
+    for (NSUInteger i = 0; i < PH_VARIANT_COUNT; i++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((1.0 + i * 3.0) * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
-            NSString *tag = @[@"策略A", @"策略B", @"策略C"][i];
-            PHCloseAllPanels();                              // 清场：露出球，且没有其他面板干扰判定
-            PHToast([NSString stringWithFormat:@"%@：正在点悬浮球…", tag]);
-            phTapStrategy(i, PHBallCenterNormalized(), tag);
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{
-                BOOL worked = PHIsMainMenuOpen();            // 只有主面板弹了才算球真被点开
-                NSString *line = [NSString stringWithFormat:@"%@ %@", tag, worked ? @"有效" : @"无效"];
-                [g_tapResults addObject:line];
-                PLog(@"tap test → %@", line);
-                PHCloseAllPanels();
-                if (i == 2) {
-                    g_tapTesting = NO;
-                    NSInteger good = 0;
-                    for (NSString *r in g_tapResults) if ([r hasSuffix:@"有效"]) good++;
-                    NSString *sum = [g_tapResults componentsJoinedByString:@"，"];
-                    PLog(@"===== 触摸合成自检结果：%@（%ld/3 有效）=====", sum, (long)good);
-                    PHToast(good ? [NSString stringWithFormat:@"可用：%@", sum]
-                                 : @"三种方式都没点开球 → 日志已弹出，复制发我");
-                    PHShowLogPanel();   // 自检结束自动弹日志（结论在最后一行）
-                }
+            const PHTapVariant *v = &kTapVariants[i];
+            NSString *tag = [NSString stringWithUTF8String:v->name];
+            PHCloseAllPanels();
+            int touchBase = atomic_load(&g_touchSeen);
+            PHToast([NSString stringWithFormat:@"(%lu/%lu) %@", (unsigned long)(i + 1),
+                     (unsigned long)PH_VARIANT_COUNT, tag]);
+            CGPoint nc = PHBallCenterNormalized();
+            CGSize S = PHBallScreenSize();
+            CGPoint cPts = CGPointMake(nc.x * S.width, nc.y * S.height);
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                PHFireVariant(v, cPts, tag);
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)),
+                               dispatch_get_main_queue(), ^{
+                    BOOL opened = PHIsMainMenuOpen();
+                    int touchNow = atomic_load(&g_touchSeen);
+                    NSString *res = opened ? @"✅ 点击成功"
+                                    : (touchNow > touchBase ? @"⚠️ 触摸到了但没触发点击" : @"❌ 完全无反应");
+                    NSString *line = [NSString stringWithFormat:@"%@ → %@", tag, res];
+                    [g_tapResults addObject:line];
+                    PLog(@"variant: %@", line);
+                    PHCloseAllPanels();
+                    if (i + 1 == PH_VARIANT_COUNT) {
+                        g_tapTesting = NO;
+                        NSInteger ok = 0, partial = 0;
+                        for (NSString *r in g_tapResults) {
+                            if ([r containsString:@"✅"]) ok++;
+                            else if ([r containsString:@"⚠️"]) partial++;
+                        }
+                        PLog(@"===== 对照自检结果：成功 %ld / 触摸到达未触发 %ld / 无反应 %ld =====",
+                             (long)ok, (long)partial, (long)(PH_VARIANT_COUNT - ok - partial));
+                        for (NSString *r in g_tapResults) PLog(@"  %@", r);
+                        PHToast(ok ? [NSString stringWithFormat:@"可用组合 %ld 个", (long)ok]
+                                   : (partial ? @"触摸到了但没触发点击（有进展）" : @"全部无反应"));
+                        PHShowLogPanel();
+                    }
+                });
             });
         });
     }
-}
-
-#pragma mark - 悬浮球图标（相册选图）
-
-static id g_iconPickerDelegate = nil;
-
-@interface PHIconPickerDelegate : NSObject <UIImagePickerControllerDelegate, UINavigationControllerDelegate>
-@end
-
-@implementation PHIconPickerDelegate
-
-- (void)imagePickerController:(UIImagePickerController *)picker
-didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> *)info {
-    UIImage *img = info[UIImagePickerControllerEditedImage] ?: info[UIImagePickerControllerOriginalImage];
-    [picker dismissViewControllerAnimated:YES completion:^{
-        if (!img) return;
-        NSString *doc = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-        NSString *path = [doc stringByAppendingPathComponent:@"ball_icon.png"];
-        if ([UIImagePNGRepresentation(img) writeToFile:path atomically:YES]) {
-            [[NSUserDefaults standardUserDefaults] setObject:@"ball_icon.png" forKey:@"phantom_ball_icon"];
-            [[NSUserDefaults standardUserDefaults] synchronize];
-            PLog(@"ball icon saved: %@", path);
-            PHRefreshBall();
-            PHToast(@"悬浮球图标已更新");
-        } else {
-            PHToast(@"图标保存失败");
-        }
-    }];
-}
-
-- (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
-    [picker dismissViewControllerAnimated:YES completion:nil];
-}
-
-@end
-
-void PHShowIconPicker(void) {
-    UIWindowScene *scene = nil;
-    for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
-        if ([sc isKindOfClass:[UIWindowScene class]] &&
-            sc.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)sc; break; }
-    }
-    if (!scene) { PHToast(@"没有可用窗口"); return; }
-    // present 必须在真正的宿主窗口上（我们的浮层不是 key window）
-    UIWindow *host = scene.keyWindow;
-    if (!host) {
-        for (UIWindow *w in scene.windows) {
-            if (w != g_ballWin && w.rootViewController) { host = w; break; }
-        }
-    }
-    UIViewController *root = host.rootViewController;
-    if (!root) { PHToast(@"宿主窗口没有控制器，无法打开相册"); return; }
-    if (!g_iconPickerDelegate) g_iconPickerDelegate = [[PHIconPickerDelegate alloc] init];
-
-    UIImagePickerController *picker = [[UIImagePickerController alloc] init];
-    picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
-    picker.allowsEditing = YES;
-    picker.delegate = (PHIconPickerDelegate *)g_iconPickerDelegate;
-    [root presentViewController:picker animated:YES completion:nil];
-    PLog(@"icon picker presented on %@", NSStringFromClass([root class]));
-}
-
-void PHResetBallIcon(void) {
-    NSString *doc = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-    [[NSFileManager defaultManager] removeItemAtPath:[doc stringByAppendingPathComponent:@"ball_icon.png"] error:nil];
-    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"phantom_ball_icon"];
-    PHRefreshBall();
-    PHToast(@"已恢复默认图标");
 }
 
 #pragma mark - 日志面板（长按球打开）
@@ -644,7 +670,7 @@ static void phSelftest(void) {
     PH_CHECK(g_iokitReady, @"IOKit 符号解析成功");
     if (g_iokitReady) {
         CGSize S = [UIScreen mainScreen].bounds.size;
-        IOHIDEventRef ev = pFingerEvent(NULL, mach_absolute_time(), 1, 2, 7,
+        IOHIDEventRef ev = pFingerFloat(NULL, mach_absolute_time(), 1, 2, 7,
                                         100.0f / S.width, 300.0f / S.height,
                                         0, 0.6f, 0, TRUE, TRUE, 0);
         PH_CHECK(ev != NULL, @"合成触摸事件创建成功");
@@ -689,6 +715,11 @@ static void phSelftest(void) {
         PHTestSyntheticTap();
         PH_CHECK(g_tapTesting, @"触摸自检已启动（3 种方式依次点球）");
         g_tapTesting = NO;   // 复位，别影响后面的断言
+        PH_CHECK(PH_VARIANT_COUNT == 6, @"对照自检共 6 组变量组合");
+        BOOL fired = PHFireVariant(&kTapVariants[0], CGPointMake(100, 300), @"自测组合A");
+        PH_CHECK(fired, @"对照组合可派发（事件对象能创建）");
+        // 模拟器/无真触摸环境：球不该收到触摸（探针基线）
+        PH_CHECK(atomic_load(&g_touchSeen) == 0, @"探针基线为 0（无真触摸时不误计）");
     }
 
     // v0.6：吸附（必执行）/ 收纳条完全可见 / 条态也吸附 / 自动收纳计时
