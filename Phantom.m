@@ -57,6 +57,11 @@ static IOHIDEventSystemClientRef (*pCreate)(CFAllocatorRef);
 static IOHIDEventSystemClientRef (*pCreateWithType)(CFAllocatorRef, int32_t, void *);
 static void (*pDispatch)(IOHIDEventSystemClientRef, IOHIDEventRef);
 static void (*pSchedule)(IOHIDEventSystemClientRef, CFRunLoopRef, CFStringRef);
+// hand 包 finger 的写法需要这两个
+typedef IOHIDEventRef (*PFDigitizerEvent)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, uint32_t, uint32_t,
+                                          double, double, double, double, double, Boolean, Boolean, uint32_t);
+static PFDigitizerEvent pDigitizerEvent = NULL;
+static void (*pAppendEvent)(IOHIDEventRef, IOHIDEventRef, uint32_t);
 static PFFingerFloat  pFingerFloat  = NULL;
 static PFFingerDouble pFingerDouble = NULL;
 
@@ -74,6 +79,8 @@ static BOOL phLoadIOKit(void) {
     pCreateWithType = dlsym(h, "IOHIDEventSystemClientCreateWithType");
     pDispatch       = dlsym(h, "IOHIDEventSystemClientDispatchEvent");
     pSchedule       = dlsym(h, "IOHIDEventSystemClientScheduleWithRunLoop");
+    pDigitizerEvent = (PFDigitizerEvent)dlsym(h, "IOHIDEventCreateDigitizerEvent");
+    pAppendEvent    = dlsym(h, "IOHIDEventAppendEvent");
     pFingerFloat    = (PFFingerFloat)dlsym(h, "IOHIDEventCreateDigitizerFingerEvent");
     pFingerDouble   = (PFFingerDouble)dlsym(h, "IOHIDEventCreateDigitizerFingerEvent");
     PLog(@"符号解析：Create=%p CreateWithType=%p Dispatch=%p Schedule=%p Finger=%p",
@@ -432,7 +439,48 @@ static void phCreateBall(void) {
          (long)PHCfgI(@"phantom_ball_shape", 1), (int)g_ballCollapsed);
 }
 
-#pragma mark - 触摸合成自检（对照诊断：6 组变量组合，一次试完）
+#pragma mark - 全屏触摸探针（自检期间铺满整屏：事件到没到、到了哪个坐标）
+
+static UIView      *g_probeView = nil;
+static atomic_int   g_probeHits = 0;
+static CGPoint      g_probeLast = {0, 0};
+
+@interface PHTouchProbe : UIView
+@end
+
+@implementation PHTouchProbe
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    UITouch *t = touches.anyObject;
+    CGPoint pt = [t locationInView:self];
+    atomic_fetch_add(&g_probeHits, 1);
+    g_probeLast = pt;
+    PLog(@"★ 探针收到合成触摸：屏幕坐标 (%.0f, %.0f)", pt.x, pt.y);
+    [super touchesBegan:touches withEvent:event];
+}
+@end
+
+// 自检期间开：全屏拦截，任何位置的事件都能被记录；自检结束关：恢复"只有球拦触摸"
+static void PHProbeSetEnabled(BOOL on) {
+    if (!g_ballWin) return;
+    if (on) {
+        if (!g_probeView) {
+            g_probeView = [[PHTouchProbe alloc] initWithFrame:g_ballWin.bounds];
+            g_probeView.backgroundColor = [UIColor clearColor];
+            g_probeView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            [g_ballWin addSubview:g_probeView];
+        }
+        g_probeView.hidden = NO;
+        [(PHBallWindow *)g_ballWin setHitTarget:g_probeView];
+        atomic_store(&g_probeHits, 0);
+        PLog(@"全屏探针已开启（记录任何位置的触摸）");
+    } else {
+        g_probeView.hidden = YES;
+        [(PHBallWindow *)g_ballWin setHitTarget:g_ballCtl];
+        PLog(@"全屏探针已关闭");
+    }
+}
+
+#pragma mark - 触摸合成自检（对照诊断：变量组合，一次试完）
 
 static BOOL g_tapTesting = NO;
 static NSMutableArray<NSString *> *g_tapResults = nil;
@@ -452,15 +500,15 @@ typedef struct {
     BOOL normalized;
     int  clientKind;      // 0=Create, 1=CreateWithType(HID=1), 2=CreateWithType(Admin=0)
     BOOL schedule;
+    int  style;           // 0=finger 单发, 1=hand 套 finger, 2=DigitizerEvent 直连
 } PHTapVariant;
 
+// 第二轮：聚焦"事件怎么造、坐标怎么给"（第一轮已排除 float/double 与调度的影响）
 static const PHTapVariant kTapVariants[] = {
-    {"A_double+归一化+Create+调度",   YES, YES, 0, YES},
-    {"B_float +归一化+Create+调度",   NO,  YES, 0, YES},
-    {"C_double+点坐标+Create+调度",   YES, NO,  0, YES},
-    {"D_double+归一化+HID+调度",      YES, YES, 1, YES},
-    {"E_double+归一化+Create无调度",  YES, YES, 0, NO},
-    {"F_double+点坐标+HID+调度",      YES, NO,  1, YES},
+    {"A_finger单发+归一化（基线）",      YES, YES, 0, YES},
+    {"G_hand套finger+归一化",            YES, YES, 0, YES},
+    {"H_hand套finger+点坐标",            YES, NO,  0, YES},
+    {"I_DigitizerEvent直连+归一化",      YES, YES, 0, YES},
 };
 #define PH_VARIANT_COUNT (sizeof(kTapVariants) / sizeof(kTapVariants[0]))
 
@@ -489,22 +537,32 @@ static BOOL PHFireVariant(const PHTapVariant *v, CGPoint ptPts, NSString *tag) {
     CGSize S = PHBallScreenSize();
     double x = v->normalized ? (ptPts.x / S.width)  : ptPts.x;
     double y = v->normalized ? (ptPts.y / S.height) : ptPts.y;
+    // 造一"手指按下/抬起"对：style 决定事件怎么写
     IOHIDEventRef down = NULL, up = NULL;
-    if (v->useDouble && pFingerDouble) {
+    if (v->style == 2 && pDigitizerEvent) {
+        // 直连：直接用 DigitizerEvent 造触摸（type=2 手指）
+        down = pDigitizerEvent(NULL, mach_absolute_time(), 2, 0, 2, 7, 0, x, y, 0.0, 0.62, 0.0, TRUE, TRUE, 0);
+        usleep(60000);
+        up   = pDigitizerEvent(NULL, mach_absolute_time(), 2, 0, 2, 3, 0, x, y, 0.0, 0.0, 0.0, FALSE, FALSE, 0);
+    } else if (v->style == 1 && pDigitizerEvent && pAppendEvent && pFingerDouble) {
+        // hand 包 finger（社区通用写法）：hand 事件里 append 一个 finger
+        IOHIDEventRef hDown = pDigitizerEvent(NULL, mach_absolute_time(), 3, 0, 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        IOHIDEventRef fDown = pFingerDouble(NULL, mach_absolute_time(), 1, 2, 7, x, y, 0.0, 0.62, 0.0, TRUE, TRUE, 0);
+        if (hDown && fDown) { pAppendEvent(hDown, fDown, 0); down = hDown; }
+        usleep(60000);
+        IOHIDEventRef hUp = pDigitizerEvent(NULL, mach_absolute_time(), 3, 0, 1, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        IOHIDEventRef fUp = pFingerDouble(NULL, mach_absolute_time(), 1, 2, 3, x, y, 0.0, 0.0, 0.0, FALSE, FALSE, 0);
+        if (hUp && fUp) { pAppendEvent(hUp, fUp, 0); up = hUp; }
+    } else if (pFingerDouble) {
         down = pFingerDouble(NULL, mach_absolute_time(), 1, 2, 7, x, y, 0.0, 0.62, 0.0, TRUE, TRUE, 0);
         usleep(60000);
         up   = pFingerDouble(NULL, mach_absolute_time(), 1, 2, 3, x, y, 0.0, 0.0, 0.0, FALSE, FALSE, 0);
-    } else if (pFingerFloat) {
-        down = pFingerFloat(NULL, mach_absolute_time(), 1, 2, 7, (float)x, (float)y, 0, 0.62f, 0, TRUE, TRUE, 0);
-        usleep(60000);
-        up   = pFingerFloat(NULL, mach_absolute_time(), 1, 2, 3, (float)x, (float)y, 0, 0.0f, 0, FALSE, FALSE, 0);
     }
-    if (!down || !up) { PLog(@"[%@] 事件创建失败", tag); return NO; }
+    if (!down || !up) { PLog(@"[%@] 事件创建失败（style=%d）", tag, v->style); return NO; }
     pDispatch(c, down);
     usleep(60000);
     pDispatch(c, up);
-    PLog(@"[%@] 已派发（%s，x=%.4f y=%.4f，client=%d，调度=%d）", tag,
-         v->useDouble ? "double" : "float", x, y, v->clientKind, (int)v->schedule);
+    PLog(@"[%@] 已派发（style=%d，x=%.4f y=%.4f，client=%d，调度=%d）", tag, v->style, x, y, v->clientKind, (int)v->schedule);
     return YES;
 }
 
@@ -515,8 +573,9 @@ void PHTestSyntheticTap(void) {
     g_tapTesting = YES;
     if (!g_tapResults) g_tapResults = [NSMutableArray array];
     [g_tapResults removeAllObjects];
-    PLog(@"===== 触摸合成对照自检开始（%lu 组组合）=====", (unsigned long)PH_VARIANT_COUNT);
-    PHToast(@"对照自检开始：约 20 秒，期间别碰屏幕");
+    PLog(@"===== 触摸合成对照自检开始（%lu 组组合，全屏探针已开）=====", (unsigned long)PH_VARIANT_COUNT);
+    PHToast(@"对照自检开始：约 15 秒，期间别碰屏幕");
+    PHProbeSetEnabled(YES);
 
     for (NSUInteger i = 0; i < PH_VARIANT_COUNT; i++) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((1.0 + i * 3.0) * NSEC_PER_SEC)),
@@ -524,7 +583,8 @@ void PHTestSyntheticTap(void) {
             const PHTapVariant *v = &kTapVariants[i];
             NSString *tag = [NSString stringWithUTF8String:v->name];
             PHCloseAllPanels();
-            int touchBase = atomic_load(&g_touchSeen);
+            int touchBase  = atomic_load(&g_touchSeen);
+            int probeBase  = atomic_load(&g_probeHits);
             PHToast([NSString stringWithFormat:@"(%lu/%lu) %@", (unsigned long)(i + 1),
                      (unsigned long)PH_VARIANT_COUNT, tag]);
             CGPoint nc = PHBallCenterNormalized();
@@ -536,18 +596,29 @@ void PHTestSyntheticTap(void) {
                                dispatch_get_main_queue(), ^{
                     BOOL opened = PHIsMainMenuOpen();
                     int touchNow = atomic_load(&g_touchSeen);
-                    NSString *res = opened ? @"✅ 点击成功"
-                                    : (touchNow > touchBase ? @"⚠️ 触摸到了但没触发点击" : @"❌ 完全无反应");
+                    int probeNow = atomic_load(&g_probeHits);
+                    NSString *res;
+                    if (opened) {
+                        res = @"✅ 点击成功（球被点开）";
+                    } else if (probeNow > probeBase) {
+                        res = [NSString stringWithFormat:@"★ 事件到达屏幕，落在 (%.0f,%.0f)",
+                               g_probeLast.x, g_probeLast.y];
+                    } else if (touchNow > touchBase) {
+                        res = @"⚠️ 球收到触摸但没触发点击";
+                    } else {
+                        res = @"❌ 事件根本没到屏幕";
+                    }
                     NSString *line = [NSString stringWithFormat:@"%@ → %@", tag, res];
                     [g_tapResults addObject:line];
                     PLog(@"variant: %@", line);
                     PHCloseAllPanels();
                     if (i + 1 == PH_VARIANT_COUNT) {
                         g_tapTesting = NO;
+                        PHProbeSetEnabled(NO);
                         NSInteger ok = 0, partial = 0;
                         for (NSString *r in g_tapResults) {
                             if ([r containsString:@"✅"]) ok++;
-                            else if ([r containsString:@"⚠️"]) partial++;
+                            else if ([r containsString:@"★"] || [r containsString:@"⚠️"]) partial++;
                         }
                         PLog(@"===== 对照自检结果：成功 %ld / 触摸到达未触发 %ld / 无反应 %ld =====",
                              (long)ok, (long)partial, (long)(PH_VARIANT_COUNT - ok - partial));
@@ -782,11 +853,15 @@ static void phSelftest(void) {
         PHTestSyntheticTap();
         PH_CHECK(g_tapTesting, @"触摸自检已启动（3 种方式依次点球）");
         g_tapTesting = NO;   // 复位，别影响后面的断言
-        PH_CHECK(PH_VARIANT_COUNT == 6, @"对照自检共 6 组变量组合");
+        PH_CHECK(PH_VARIANT_COUNT == 4, @"对照自检共 4 组变量组合");
         BOOL fired = PHFireVariant(&kTapVariants[0], CGPointMake(100, 300), @"自测组合A");
         PH_CHECK(fired, @"对照组合可派发（事件对象能创建）");
         // 模拟器/无真触摸环境：球不该收到触摸（探针基线）
         PH_CHECK(atomic_load(&g_touchSeen) == 0, @"探针基线为 0（无真触摸时不误计）");
+        PHProbeSetEnabled(YES);
+        PH_CHECK(g_probeView != nil && !g_probeView.hidden, @"全屏探针可开启（记录任意位置触摸）");
+        PHProbeSetEnabled(NO);
+        PH_CHECK(g_probeView.hidden, @"全屏探针可关闭（恢复只有球拦触摸）");
     }
 
     // v0.6：吸附（必执行）/ 收纳条完全可见 / 条态也吸附 / 自动收纳计时
