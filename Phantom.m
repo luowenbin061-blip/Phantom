@@ -179,13 +179,10 @@ static void PHBallSettle(void) {
             PLog(@"manual drag-out (%@) → collapse", outLeft ? @"左" : @"右");
             CGFloat ty = MAX(0, MIN(f.origin.y, S.height - f.size.height));
             CGFloat tx = outLeft ? 0 : (S.width - w);
-            [UIView animateWithDuration:0.12 animations:^{
-                g_ballHost.frame = CGRectMake(tx, ty, w, w);
-            } completion:^(BOOL done) {
-                PHBallSetCollapsed(YES);
-                PHBallSavePosition();
-            }];
-            PHBallScheduleAutoCollapse();   // 展开后重新开始 20 秒计时
+            g_ballHost.frame = CGRectMake(tx, ty, w, w);   // 先归位
+            PHBallSetCollapsed(YES);                        // 立即变条（不等动画）
+            PHBallSavePosition();
+            PHBallScheduleAutoCollapse();                   // 展开后重新开始 20 秒计时
             return;
         }
     }
