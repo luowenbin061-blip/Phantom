@@ -416,6 +416,58 @@ static void phCreateBall(void) {
          (long)PHCfgI(@"phantom_ball_shape", 1), (int)g_ballCollapsed);
 }
 
+#pragma mark - 触摸合成自检（真机 go/no-go：假手指系统认不认）
+
+static BOOL g_tapTesting = NO;
+static NSMutableArray<NSString *> *g_tapResults = nil;
+
+static CGPoint PHBallCenterNormalized(void) {
+    CGSize S = PHBallScreenSize();
+    if (S.width <= 0 || S.height <= 0) return CGPointMake(0.5, 0.5);
+    CGRect f = g_ballHost.frame;
+    return CGPointMake((f.origin.x + f.size.width / 2.0) / S.width,
+                       (f.origin.y + f.size.height / 2.0) / S.height);
+}
+
+// 用 3 种方式（策略A/B/C）依次点自己的悬浮球：
+// 球被点开（面板弹出）= 那种方式系统认 → 就是能用的合成触摸
+void PHTestSyntheticTap(void) {
+    if (g_tapTesting) { PHToast(@"自检正在进行，稍等…"); return; }
+    if (!g_iokitReady) { PHToast(@"IOKit 未就绪，无法自检"); return; }
+    g_tapTesting = YES;
+    if (!g_tapResults) g_tapResults = [NSMutableArray array];
+    [g_tapResults removeAllObjects];
+    PLog(@"===== 触摸合成自检开始（3 种方式各点一次悬浮球）=====");
+    PHToast(@"自检开始：约 8 秒，看有没有方式能让球自己弹开");
+
+    for (int i = 0; i < 3; i++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((1.0 + i * 2.5) * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            NSString *tag = @[@"策略A", @"策略B", @"策略C"][i];
+            PHCloseMenu();                                   // 先露出球
+            PHToast([NSString stringWithFormat:@"%@：正在点悬浮球…", tag]);
+            phTapStrategy(i, PHBallCenterNormalized(), tag);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                BOOL worked = PHIsPanelOpen();               // 球被点开 → 面板自己弹了
+                NSString *line = [NSString stringWithFormat:@"%@ %@", tag, worked ? @"有效" : @"无效"];
+                [g_tapResults addObject:line];
+                PLog(@"tap test → %@", line);
+                PHCloseMenu();
+                if (i == 2) {
+                    g_tapTesting = NO;
+                    NSInteger good = 0;
+                    for (NSString *r in g_tapResults) if ([r hasSuffix:@"有效"]) good++;
+                    NSString *sum = [g_tapResults componentsJoinedByString:@"，"];
+                    PLog(@"===== 触摸合成自检结果：%@（%ld/3 有效）=====", sum, (long)good);
+                    PHToast(good ? [NSString stringWithFormat:@"可用：%@", sum]
+                                 : @"三种方式都没点开球 → 复制日志发我");
+                }
+            });
+        });
+    }
+}
+
 #pragma mark - 悬浮球图标（相册选图）
 
 static id g_iconPickerDelegate = nil;
@@ -623,6 +675,16 @@ static void phSelftest(void) {
     PH_CHECK([udB objectForKey:@"phantom_ball_icon"] == nil, @"恢复默认图标生效");
     PHRefreshBall();
     PH_CHECK(g_ballWin != nil && g_ballCtl != nil, @"悬浮球可按设置重建（带拖动控件）");
+
+    // v0.8：触摸自检入口（模拟器里合成点击无效，验证的是"入口/状态机跑通"）
+    {
+        CGPoint nb = PHBallCenterNormalized();
+        PH_CHECK(nb.x > 0 && nb.x < 1 && nb.y > 0 && nb.y < 1, @"球中心归一化坐标有效（自检要用的落点）");
+        g_tapTesting = NO;
+        PHTestSyntheticTap();
+        PH_CHECK(g_tapTesting, @"触摸自检已启动（3 种方式依次点球）");
+        g_tapTesting = NO;   // 复位，别影响后面的断言
+    }
 
     // v0.6：吸附（必执行）/ 收纳条完全可见 / 条态也吸附 / 自动收纳计时
     [udB setInteger:0 forKey:@"phantom_ball_attach"];     // 开吸附

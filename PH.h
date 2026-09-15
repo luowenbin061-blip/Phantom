@@ -3,7 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
-#define PH_VERSION @"0.7"   // 幻影版本（启动完整显示/拖出即收纳/滚动修复）
+#define PH_VERSION @"0.8"   // 幻影版本（触摸合成自检入口）
 
 #pragma mark - 主题
 #define PH_BG      [UIColor colorWithRed:0.173 green:0.173 blue:0.180 alpha:0.95]   // #2C2C2E 面板底
@@ -112,3 +112,5 @@ void PHBallApplyLayout(void);                  // 设置变更后立即应用（
 void PHShowIconPicker(void);                   // 打开相册选悬浮球图标
 void PHResetBallIcon(void);                    // 恢复默认图标
 void PHBallNotifyActivity(void);                // 通知"有操作"（展开 + 重排 20 秒收纳计时）
+void PHCloseMenu(void);                         // 关主面板（自检前要露出悬浮球）
+void PHTestSyntheticTap(void);                  // 触摸合成自检：3 种方式各点一次球，自动判结果
