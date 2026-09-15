@@ -3,7 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
-#define PH_VERSION @"1.4"   // 幻影版本（补上 BackBoard 的 BKSHIDEventSetDigitizerInfo）
+#define PH_VERSION @"1.5"   // 幻影版本（坐标选择器 + 执行器）
 
 #pragma mark - 主题
 #define PH_BG      [UIColor colorWithRed:0.173 green:0.173 blue:0.180 alpha:0.95]   // #2C2C2E 面板底
@@ -118,3 +118,11 @@ void PHTestSyntheticTap(void);                  // 触摸合成自检：3 种方
 BOOL PHIsMainMenuOpen(void);                    // 主面板是否打开（自检判定基准：只有主面板打开才算球被点开）
 void PHCloseAllPanels(void);                    // 关掉所有面板（自检前清场）
 void PHShowLogPanel(void);                      // 打开日志面板（复制日志/排查）
+
+#pragma mark - 引擎 / 执行器 / 选点器（跨文件接口）
+void PHLogLine(NSString *text);                    // 写日志（其他 .m 也能记）
+void PHFireTapPts(double x, double y, uint32_t phase, BOOL touch);  // 发一次触摸状态（屏幕像素点）
+void PHShowPointPicker(NSInteger actionIndex, BOOL forPointB, BOOL regionMode);  // 屏幕点选 / 拖框选区
+void PHRunTask(void);                              // 开始执行任务
+void PHStopTask(void);                             // 停止执行
+BOOL PHIsRunning(void);                            // 是否正在执行

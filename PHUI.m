@@ -427,7 +427,8 @@ static void PHBuildMenuWindow(BOOL deleteMode) {
 
     CGFloat bsz = 42;
     CGFloat gap = (pw - 4 * bsz) / 5.0;
-    NSArray *symbols = @[ @"plus", @"minus", @"ellipsis", @"play.fill" ];
+    NSArray *symbols = @[ @"plus", @"minus", @"ellipsis",
+                          (PHIsRunning() ? @"stop.fill" : @"play.fill") ];
     NSArray *colors  = @[ PH_BTN_ADD, PH_BTN_DEL, PH_BTN_SET, PH_BTN_RUN ];
     NSArray *sels    = @[ @"onAdd", @"onDel", @"onSet", @"onRun" ];
     for (NSInteger i = 0; i < 4; i++) {
@@ -447,7 +448,12 @@ static void PHBuildMenuWindow(BOOL deleteMode) {
 + (void)onAdd      { PHShowAddAction(); }
 + (void)onDel      { PHBuildMenuWindow(YES); PHToast(@"点动作卡片即删除"); }
 + (void)onSet      { PHShowSettings(); }
-+ (void)onRun      { PHToast(PHActions().count ? @"执行引擎将在下一阶段接入" : @"先点蓝色 ＋ 添加动作"); }
++ (void)onRun {
+    if (PHIsRunning()) { PHStopTask(); PHToast(@"正在停止…"); PHRefreshMenuIfVisible(); return; }
+    if (!PHActions().count) { PHToast(@"先点蓝色 ＋ 添加动作"); return; }
+    PHRunTask();
+    PHRefreshMenuIfVisible();
+}
 + (void)onCard:(UIButton *)b    { PHShowActionEdit(b.tag); }
 + (void)onDelCard:(UIButton *)b {
     NSInteger i = b.tag;
@@ -554,9 +560,9 @@ static NSInteger g_editIndex = -1;
 + (void)onWaitMs    { [self numEdit:@"等待时间(毫秒)" hint:@"例：5000 = 等 5 秒" key:@"waitMs"]; }
 + (void)onScale     { [self numEdit:@"回放倍数" hint:@"2.0 = 两倍速" key:@"replayScale"]; }
 + (void)onTexts     { [self listEdit:@"识别文本列表" hint:@"多个用逗号分隔" key:@"textList"]; }
-+ (void)onPointA    { PHToast(@"坐标选择器将在触摸引擎阶段接入（需截图点选）"); }
-+ (void)onPointB    { PHToast(@"坐标选择器将在触摸引擎阶段接入"); }
-+ (void)onRegion    { PHToast(@"区域选择器将在识别引擎阶段接入"); }
++ (void)onPointA    { PHShowPointPicker(g_editIndex, NO, NO); }
++ (void)onPointB    { PHShowPointPicker(g_editIndex, YES, NO); }
++ (void)onRegion    { PHShowPointPicker(g_editIndex, NO, YES); }
 + (void)onImages    { PHToast(@"图像选择将在识图引擎阶段接入"); }
 + (void)onColors    { PHToast(@"取色器将在识色引擎阶段接入"); }
 + (void)onRecord    { PHToast(@"录制功能将在后续阶段接入"); }

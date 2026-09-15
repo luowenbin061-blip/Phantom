@@ -1096,11 +1096,41 @@ static void phSelftest(void) {
     PH_CHECK([b.desc isEqualToString:@"测试描述"] && fabs(b.pressMs - 66) < 0.01,
              @"动作模型 JSON 往返正确");
 
+    // v1.5：执行器（启动 / 停止 / 测试动作清理）
+    PH_CHECK(!PHIsRunning(), @"执行器初始未在运行");
+    {
+        PHAction *w = [PHAction actionWithType:PHActionTypeWait];
+        w.waitMs = 30;
+        [PHActions() addObject:w];
+        NSUInteger cntBefore = PHActions().count;
+        PHRunTask();
+        PH_CHECK(PHIsRunning(), @"执行器可启动（动作序列开始跑）");
+        PHStopTask();
+        usleep(250000);
+        BOOL idle = !PHIsRunning();
+        [PHActions() removeObject:w];
+        PHSaveTasks();
+        PH_CHECK(idle, @"停止后执行器回到空闲");
+        PH_CHECK(PHActions().count == cntBefore - 1, @"执行器测试动作已清理");
+    }
+
     NSString *doc = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
     [g_stLog writeToFile:[doc stringByAppendingPathComponent:@"Phantom_selftest.txt"]
               atomically:YES encoding:NSUTF8StringEncoding error:nil];
     PLog(@"selftest RESULT pass=%d fail=%d", g_stPass, g_stFail);
     stWrite([NSString stringWithFormat:@"RESULT pass=%d fail=%d", g_stPass, g_stFail]);
+}
+
+#pragma mark - 跨文件接口（PHExec.m / PHPick.m 调用）
+
+void PHLogLine(NSString *text) { phLogLine(text); }
+
+// 按屏幕像素点发一次触摸状态（phase/touch 语义同老贝贝的调用序列）
+void PHFireTapPts(double x, double y, uint32_t phase, BOOL touch) {
+    if (!pDigitizerEvent || !pFingerDouble) { PHLogLine(@"触摸发送跳过：引擎未就绪"); return; }
+    IOHIDEventSystemClientRef c = PHClientForKind(0);
+    if (!c) { PHLogLine(@"触摸发送跳过：client 为空"); return; }
+    PHFireOne(c, phase, touch, x, y, @"执行");
 }
 
 #pragma mark - 入口

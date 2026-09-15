@@ -25,7 +25,7 @@ jobs:
             -O2
             -Wall
             -install_name @rpath/Phantom.dylib
-            -o Phantom.dylib Phantom.m PHTheme.m PHModel.m PHUI.m
+            -o Phantom.dylib Phantom.m PHTheme.m PHModel.m PHUI.m PHPick.m PHExec.m
             -I.
             -framework Foundation -framework UIKit
             -framework CoreGraphics -framework QuartzCore
