@@ -81,7 +81,12 @@ static void PHPanelBegin(NSString *title, CGFloat wRatio, BOOL tall) {
     [card addSubview:PHHairline(pw, PH_TITLE_H)];
 
     UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(16, PH_TITLE_H + 12, g_pW, 200)];
-    sv.showsVerticalScrollIndicator = NO;
+    sv.showsVerticalScrollIndicator = YES;                       // 让用户看得出能滚
+    sv.alwaysBounceVertical = YES;                              // 内容不满也能拖动
+    sv.delaysContentTouches = NO;                               // 子按钮点击跟手，且不挡滚动
+    sv.canCancelContentTouches = YES;
+    sv.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+    sv.clipsToBounds = YES;
     [card addSubview:sv];
     g_pScroll = sv;
     g_pY = 0;
@@ -130,17 +135,22 @@ static void PHPanelButtons(NSArray<UIButton *> *btns) {
     }
     g_pY = by + PH_ROW_H;
 
+    // 内容总高（不含底部按钮区）
+    CGFloat contentH = MAX(0.0, g_pY - 12 - PH_ROW_H - 12);
     CGFloat ph = 12 + g_pY + 16;
-    CGFloat scrollH = g_pY - 12 - PH_ROW_H - 12;
     CGFloat maxH = g_pWin.bounds.size.height * 0.74;
-    if (ph > maxH) {                       // 内容太高 → 夹住面板，滚动区吃掉差额
-        scrollH -= (ph - maxH);
+    CGFloat scrollH = contentH;
+    if (ph > maxH) {                       // 太高 → 夹住面板，滚动区吃掉差额（保底 130）
+        scrollH = MAX(130.0, contentH - (ph - maxH));
         ph = maxH;
     }
     CGRect cf = g_pCard.frame;
     g_pCard.frame = CGRectMake(cf.origin.x, (g_pWin.bounds.size.height - ph) / 2.0, cf.size.width, ph);
-    g_pScroll.frame = CGRectMake(16, PH_TITLE_H + 12, g_pW, MAX(90.0, scrollH));
-    g_pScroll.contentSize = CGSizeMake(g_pW, g_pY - 12 - PH_ROW_H - 12);
+    // 滚动区占满「标题栏之下、底部按钮之上」的全部空间：手指落在卡片里就能滚
+    CGFloat availH = ph - (PH_TITLE_H + 12) - (PH_ROW_H + 24);
+    g_pScroll.frame = CGRectMake(16, PH_TITLE_H + 12, g_pW, MAX(scrollH, availH));
+    g_pScroll.contentSize = CGSizeMake(g_pW, contentH);
+    g_pScroll.alwaysBounceVertical = YES;
 }
 
 #pragma mark - 输入卡片（改数值/文本，立即生效）

@@ -165,8 +165,30 @@ static void PHBallSetCollapsed(BOOL collapsed) {
 static void PHBallSettle(void) {
     if (!g_ballHost) return;
     CGSize S = PHBallScreenSize();
-    BOOL attach = (PHCfgI(@"phantom_ball_attach", 0) == 0);
+    BOOL attach     = (PHCfgI(@"phantom_ball_attach", 0) == 0);
+    BOOL collapseOn = (PHCfgI(@"phantom_edge_hide", 0) == 1);
     CGRect f = g_ballHost.frame;
+
+    // ② 手动把球拖出屏幕边缘 → 松手即收纳成条（仅当边缘收纳开启）
+    if (collapseOn && !g_ballCollapsed && f.size.width > PH_BALL_D - 1.0) {
+        CGFloat w = f.size.width;
+        BOOL outLeft  = (f.origin.x < -w * 0.30);
+        BOOL outRight = ((f.origin.x + w) > S.width + w * 0.30);
+        if (outLeft || outRight) {
+            PLog(@"manual drag-out (%@) → collapse", outLeft ? @"左" : @"右");
+            CGFloat ty = MAX(0, MIN(f.origin.y, S.height - f.size.height));
+            CGFloat tx = outLeft ? 0 : (S.width - w);
+            [UIView animateWithDuration:0.12 animations:^{
+                g_ballHost.frame = CGRectMake(tx, ty, w, w);
+            } completion:^(BOOL done) {
+                PHBallSetCollapsed(YES);
+                PHBallSavePosition();
+            }];
+            PHBallScheduleAutoCollapse();   // 展开后重新开始 20 秒计时
+            return;
+        }
+    }
+
     f.origin.y = MAX(0, MIN(f.origin.y, S.height - f.size.height));
     f.origin.x = MAX(0, MIN(f.origin.x, S.width - f.size.width));
     if (attach) {
@@ -350,8 +372,9 @@ static void phCreateBall(void) {
     w.windowLevel = UIWindowLevelAlert + 90;
     g_ballWin = w;
 
-    CGFloat posX = rx * S.width, posY = ry * S.height;
-    if (attach && collapse) posX = (posX + PH_BALL_D / 2.0 > S.width / 2.0) ? S.width - PH_STRIP_W : 0;
+    // 启动一律按「完整球」显示：位置夹紧到屏幕内，避免出现"只露一条"的残缺态
+    CGFloat posX = MAX(0, MIN(rx * S.width, S.width - PH_BALL_D));
+    CGFloat posY = MAX(0, MIN(ry * S.height, S.height - PH_BALL_D));
 
     UIView *host = [[UIView alloc] initWithFrame:CGRectMake(posX, posY, PH_BALL_D, PH_BALL_D)];
     host.backgroundColor = [UIColor clearColor];
@@ -620,6 +643,21 @@ static void phSelftest(void) {
     g_ballIdleGen = 0;
     PHBallScheduleAutoCollapse();
     PH_CHECK(g_ballIdleGen > 0, @"自动收纳已排期（20 秒无操作才收纳）");
+
+    // v0.7：① 启动即完整显示 ② 拖出边缘即收纳
+    [udB setInteger:1 forKey:@"phantom_edge_hide"];
+    [udB setInteger:0 forKey:@"phantom_ball_attach"];
+    g_ballHost.frame = CGRectMake(SZ.width - PH_STRIP_W, 300, PH_BALL_D, PH_BALL_D);  // 模拟"上次退出是收纳态"
+    PHBallSettle();
+    PH_CHECK(g_ballHost.frame.size.width >= PH_BALL_D - 0.5 &&
+             g_ballHost.frame.origin.x >= -0.5 &&
+             g_ballHost.frame.origin.x + PH_BALL_D <= SZ.width + 0.5,
+             @"启动/松手后球完整可见（不会只露一条）");
+    PHBallSetCollapsed(NO);
+    g_ballHost.frame = CGRectMake(SZ.width + 30, 300, PH_BALL_D, PH_BALL_D);         // 拖出右边缘
+    PHBallSettle();
+    PH_CHECK(g_ballCollapsed, @"手动拖出屏幕边缘 → 立即收纳成条");
+    PHBallSetCollapsed(NO);
     [udB setInteger:0 forKey:@"phantom_edge_hide"];
 
     // 合成点击调用链（模拟器里 dispatch 无真实效果，但要确保不崩）

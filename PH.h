@@ -3,7 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
-#define PH_VERSION @"0.6"   // 幻影版本（吸附修复/收纳条/20秒空闲收纳）
+#define PH_VERSION @"0.7"   // 幻影版本（启动完整显示/拖出即收纳/滚动修复）
 
 #pragma mark - 主题
 #define PH_BG      [UIColor colorWithRed:0.173 green:0.173 blue:0.180 alpha:0.95]   // #2C2C2E 面板底
