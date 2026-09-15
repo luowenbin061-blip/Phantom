@@ -43,11 +43,7 @@ BOOL PHIsPanelOpen(void) {
 static void PHPanelBegin(NSString *title, CGFloat wRatio, BOOL tall) {
     PHClosePanel();
     g_pTall = tall;
-    UIWindowScene *scene = nil;
-    for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
-        if ([s isKindOfClass:[UIWindowScene class]] &&
-            s.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)s; break; }
-    }
+                UIWindowScene *scene = PHBestScene();
     if (!scene) return;
     CGSize S = scene.screen.bounds.size;
 
@@ -180,11 +176,7 @@ static void (^g_iOK)(NSString *) = nil;
 
 static void PHInputCard(NSString *title, NSString *hint, NSString *current, void (^onOK)(NSString *)) {
     if (g_iWin) { g_iWin.hidden = YES; g_iWin = nil; }
-    UIWindowScene *scene = nil;
-    for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
-        if ([s isKindOfClass:[UIWindowScene class]] &&
-            s.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)s; break; }
-    }
+                UIWindowScene *scene = PHBestScene();
     if (!scene) return;
     CGSize S = scene.screen.bounds.size;
 
@@ -256,11 +248,7 @@ static UIWindow *g_tWin = nil;
 void PHToast(NSString *text) {
     dispatch_async(dispatch_get_main_queue(), ^{
         @try {
-            UIWindowScene *scene = nil;
-            for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
-                if ([s isKindOfClass:[UIWindowScene class]] &&
-                    s.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)s; break; }
-            }
+                        UIWindowScene *scene = PHBestScene();
             if (!scene) return;
             CGSize scr = scene.screen.bounds.size;
             CGFloat sbH = 44;
@@ -381,11 +369,7 @@ static void PHBuildMenuList(BOOL deleteMode) {
 static void PHBuildMenuWindow(BOOL deleteMode) {
     PHCloseMenu();
     PHClosePanel();
-    UIWindowScene *scene = nil;
-    for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
-        if ([sc isKindOfClass:[UIWindowScene class]] &&
-            sc.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)sc; break; }
-    }
+                UIWindowScene *scene = PHBestScene();
     if (!scene) return;
     CGSize S = scene.screen.bounds.size;
 

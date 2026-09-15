@@ -156,6 +156,37 @@ static CGSize PHBallScreenSize(void) {
     return [UIScreen mainScreen].bounds.size;
 }
 
+// 最稳的场景获取：优先前台活跃场景；拿不到就退而求其次（避免"球压根没创建"这种哑失败）
+UIWindowScene *PHBestScene(void) {
+    UIWindowScene *fallback = nil;
+    for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
+        if (![sc isKindOfClass:[UIWindowScene class]]) continue;
+        UIWindowScene *ws = (UIWindowScene *)sc;
+        if (ws.activationState == UISceneActivationStateForegroundActive) return ws;
+        if (!fallback) fallback = ws;
+    }
+    if (fallback) return fallback;
+    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+        if (w.isKeyWindow && w.windowScene) return w.windowScene;
+    }
+    return nil;
+}
+
+// 球状态自证：日志里一眼看出球到底存不存在、在哪、什么形态
+static NSString *PHBallDiag(void) {
+    if (!g_ballWin) return @"球窗口=nil（未创建！）";
+    if (!g_ballHost) return @"球视图=nil（异常！）";
+    CGSize S = PHBallScreenSize();
+    CGRect f = g_ballHost.frame;
+    BOOL inside = (f.origin.x >= -1 && f.origin.y >= -1 &&
+                   f.origin.x + f.size.width <= S.width + 1 &&
+                   f.origin.y + f.size.height <= S.height + 1);
+    return [NSString stringWithFormat:@"窗口%.0fx%.0f(hidden=%d) 屏%.0fx%.0f | 球(%.0f,%.0f) %.0fx%.0f 全在屏内=%d collapsed=%d",
+            g_ballWin.bounds.size.width, g_ballWin.bounds.size.height, (int)g_ballWin.hidden,
+            S.width, S.height, f.origin.x, f.origin.y, f.size.width, f.size.height,
+            (int)inside, (int)g_ballCollapsed];
+}
+
 static void PHBallSavePosition(void) {
     if (!g_ballHost) return;
     CGSize S = PHBallScreenSize();
@@ -390,12 +421,8 @@ void PHRefreshBall(void) {
 
 static void phCreateBall(void) {
     if (g_ballWin) return;
-    UIWindowScene *scene = nil;
-    for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
-        if ([sc isKindOfClass:[UIWindowScene class]] &&
-            sc.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)sc; break; }
-    }
-    if (!scene) { PLog(@"ball: no scene"); return; }
+    UIWindowScene *scene = PHBestScene();
+    if (!scene) { PLog(@"❌ ball 创建失败：拿不到任何 UIWindowScene（球不会出现在屏幕上）"); return; }
     CGSize S = scene.screen.bounds.size;
 
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
@@ -455,6 +482,15 @@ static void phCreateBall(void) {
     PLog(@"phantom ball created at (%.0f,%.0f) 直径%.0f 形状=%ld 收纳=%d（全屏窗+视图移动）",
          host.frame.origin.x, host.frame.origin.y, PH_BALL_D,
          (long)PHCfgI(@"phantom_ball_shape", 1), (int)g_ballCollapsed);
+    PLog(@"球状态自证：%@", PHBallDiag());
+    PHToast([NSString stringWithFormat:@"幻影已就绪：球在左上 (%.0f, %.0f)，点它开面板",
+             host.frame.origin.x, host.frame.origin.y]);
+    // 脉冲一下，方便一眼找到球（解决"屏幕上找不到球"）
+    host.transform = CGAffineTransformMakeScale(0.5, 0.5);
+    [UIView animateWithDuration:0.5 delay:0.15 usingSpringWithDamping:0.45
+          initialSpringVelocity:1.0 options:UIViewAnimationOptionAllowUserInteraction
+                     animations:^{ host.transform = CGAffineTransformIdentity; }
+                     completion:nil];
 }
 
 #pragma mark - 全屏触摸探针（自检期间铺满整屏：事件到没到、到了哪个坐标）
@@ -479,7 +515,7 @@ static CGPoint      g_probeLast = {0, 0};
 
 // 自检期间开：全屏拦截，任何位置的事件都能被记录；自检结束关：恢复"只有球拦触摸"
 static void PHProbeSetEnabled(BOOL on) {
-    if (!g_ballWin) return;
+    if (!g_ballWin) { PLog(@"❌ 探针无法开启：球窗口不存在（本轮结论不可信）"); return; }
     if (on) {
         if (!g_probeView) {
             g_probeView = [[PHTouchProbe alloc] initWithFrame:g_ballWin.bounds];
@@ -490,7 +526,8 @@ static void PHProbeSetEnabled(BOOL on) {
         g_probeView.hidden = NO;
         [(PHBallWindow *)g_ballWin setHitTarget:g_probeView];
         atomic_store(&g_probeHits, 0);
-        PLog(@"全屏探针已开启（记录任何位置的触摸）");
+        PLog(@"全屏探针已开启：覆盖 %.0fx%.0f（记录任何位置的触摸）",
+             g_ballWin.bounds.size.width, g_ballWin.bounds.size.height);
     } else {
         g_probeView.hidden = YES;
         [(PHBallWindow *)g_ballWin setHitTarget:g_ballCtl];
@@ -616,9 +653,19 @@ static BOOL PHFireVariant(const PHTapVariant *v, CGPoint ptPts, NSString *tag) {
 void PHTestSyntheticTap(void) {
     if (g_tapTesting) { PHToast(@"自检正在进行，稍等…"); return; }
     if (!g_iokitReady) { PHToast(@"IOKit 未就绪，无法自检"); return; }
+    // 前置校验：没有球就没有判定基准，探针也装不上 → 会得出假的"事件没到屏幕"
+    if (!g_ballWin || !g_ballHost) {
+        PLog(@"❌ 自检中止：屏幕上没有悬浮球（%@）", PHBallDiag());
+        PHToast(@"❌ 自检中止：屏幕上没有悬浮球");
+        PHShowLogPanel();
+        return;
+    }
+    PHBallSetCollapsed(NO);      // 强制展开成球（条态下点击判定会错位）
+    PHBallActivity();
     g_tapTesting = YES;
     if (!g_tapResults) g_tapResults = [NSMutableArray array];
     [g_tapResults removeAllObjects];
+    PLog(@"自检前球状态：%@", PHBallDiag());
     PLog(@"===== 触摸合成对照自检开始（%lu 组组合，全屏探针已开）=====", (unsigned long)PH_VARIANT_COUNT);
     PHToast(@"对照自检开始：约 15 秒，期间别碰屏幕");
     PHProbeSetEnabled(YES);
@@ -714,11 +761,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 @end
 
 void PHShowIconPicker(void) {
-    UIWindowScene *scene = nil;
-    for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
-        if ([sc isKindOfClass:[UIWindowScene class]] &&
-            sc.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)sc; break; }
-    }
+        UIWindowScene *scene = PHBestScene();
     if (!scene) { PHToast(@"没有可用窗口"); return; }
     UIWindow *host = scene.keyWindow;
     if (!host) {
@@ -771,11 +814,7 @@ void PHShowLogPanel(void) {
             g_logView.text = [NSString stringWithContentsOfFile:g_logPath encoding:NSUTF8StringEncoding error:nil] ?: @"(空)";
             return;
         }
-        UIWindowScene *scene = nil;
-        for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
-            if ([sc isKindOfClass:[UIWindowScene class]] &&
-                sc.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)sc; break; }
-        }
+            UIWindowScene *scene = PHBestScene();
         if (!scene) return;
         CGSize S = scene.screen.bounds.size;
 
@@ -867,6 +906,17 @@ static void phSelftest(void) {
                  g_ballHost.frame.origin.x >= -0.5 &&
                  g_ballHost.frame.origin.x + g_ballHost.frame.size.width <= S0.width + 0.5,
                  @"启动即完整显示（球形态、不出屏，无需手动点一下）");
+    }
+    PH_CHECK(PHBestScene() != nil, @"能拿到可用窗口场景（球创建的前提）");
+    PH_CHECK([PHBallDiag() rangeOfString:@"未创建"].location == NSNotFound, @"球状态自证可读且球已创建");
+    {
+        // 没球时自检必须中止（否则会给出假的"事件没到屏幕"结论）
+        UIWindow *savedWin = g_ballWin;
+        g_ballWin = nil;
+        g_tapTesting = NO;
+        PHTestSyntheticTap();
+        PH_CHECK(!g_tapTesting, @"无球时自检直接中止（不产生假结论）");
+        g_ballWin = savedWin;
     }
 
     // v0.4：悬浮球行为（拖动保存 / 形状 / 图标复位 / 重建）
