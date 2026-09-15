@@ -62,7 +62,21 @@ static void (*pSchedule)(IOHIDEventSystemClientRef, CFRunLoopRef, CFStringRef);
 typedef IOHIDEventRef (*PFDigitizerEvent)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
                                           double, double, double, double, double, Boolean, Boolean, uint32_t);
 static PFDigitizerEvent pDigitizerEvent = NULL;
-static void (*pAppendEvent)(IOHIDEventRef, IOHIDEventRef, uint32_t);
+static void (*pAppendEvent)(IOHIDEventRef, IOHIDEventRef);          // 注意：2 个参数
+static void (*pSetIntegerValue)(IOHIDEventRef, uint32_t, int64_t);
+static void (*pSetFloatValue)(IOHIDEventRef, uint32_t, double);
+static void (*pSetSenderID)(IOHIDEventRef, uint64_t);
+
+// ══ 以下常量全部从老贝贝二进制里反汇编挖出（不是猜的）══
+// 老贝贝地址：0xC034C~0xC0358 设 IsDisplayIntegrated；0xC0458/C0478 设半径；
+//             0xC04FC/C0514 设 TiltX/TiltY；0xC1988 设 SenderID
+#define PH_FIELD_ISDISPLAYINTEGRATED 0x000B0019u   // 值 1（不设它事件会被系统丢弃）
+#define PH_FIELD_MAJORRADIUS         0x000B0014u   // 值 0.04
+#define PH_FIELD_MINORRADIUS         0x000B0015u   // 值 0.04
+#define PH_FIELD_TILTX               0x000B000Du   // 值 0x23(35)
+#define PH_FIELD_TILTY               0x000B000Eu   // 值 1
+#define PH_HAND_TRANSDUCER_TYPE      0x23u         // 35 = Hand
+#define PH_SENDER_ID                 0xDEFACEDBEEFFECE5ULL
 static PFFingerFloat  pFingerFloat  = NULL;
 static PFFingerDouble pFingerDouble = NULL;
 
@@ -82,6 +96,9 @@ static BOOL phLoadIOKit(void) {
     pSchedule       = dlsym(h, "IOHIDEventSystemClientScheduleWithRunLoop");
     pDigitizerEvent = (PFDigitizerEvent)dlsym(h, "IOHIDEventCreateDigitizerEvent");
     pAppendEvent    = dlsym(h, "IOHIDEventAppendEvent");
+    pSetIntegerValue = dlsym(h, "IOHIDEventSetIntegerValue");
+    pSetFloatValue   = dlsym(h, "IOHIDEventSetFloatValue");
+    pSetSenderID     = dlsym(h, "IOHIDEventSetSenderID");
     pFingerFloat    = (PFFingerFloat)dlsym(h, "IOHIDEventCreateDigitizerFingerEvent");
     pFingerDouble   = (PFFingerDouble)dlsym(h, "IOHIDEventCreateDigitizerFingerEvent");
     PLog(@"符号解析：Create=%p CreateWithType=%p Dispatch=%p Schedule=%p Finger=%p",
@@ -504,12 +521,10 @@ typedef struct {
     int  style;           // 0=finger 单发, 1=hand 套 finger, 2=DigitizerEvent 直连
 } PHTapVariant;
 
-// 第二轮：聚焦"事件怎么造、坐标怎么给"（第一轮已排除 float/double 与调度的影响）
+// 第三轮：完全照抄老贝贝的调用序列，只差"坐标口径"这一个变量
 static const PHTapVariant kTapVariants[] = {
-    {"A_finger单发+归一化（基线）",      YES, YES, 0, YES},
-    {"G_hand套finger+归一化",            YES, YES, 0, YES},
-    {"H_hand套finger+点坐标",            YES, NO,  0, YES},
-    {"I_DigitizerEvent直连+归一化",      YES, YES, 0, YES},
+    {"Z_照抄老贝贝+点坐标",   YES, NO,  0, YES, 3},
+    {"W_照抄老贝贝+归一化",   YES, YES, 0, YES, 3},
 };
 #define PH_VARIANT_COUNT (sizeof(kTapVariants) / sizeof(kTapVariants[0]))
 
@@ -538,6 +553,36 @@ static BOOL PHFireVariant(const PHTapVariant *v, CGPoint ptPts, NSString *tag) {
     CGSize S = PHBallScreenSize();
     double x = v->normalized ? (ptPts.x / S.width)  : ptPts.x;
     double y = v->normalized ? (ptPts.y / S.height) : ptPts.y;
+    // ══ style 3：完全照抄老贝贝（hand 事件 + finger append + 姿态 + SenderID）══
+    if (v->style == 3 && pDigitizerEvent && pFingerDouble && pAppendEvent &&
+        pSetIntegerValue && pSetFloatValue) {
+        // ① hand 父事件：type=0x23(Hand)，eventMask=2，range=1/touch=0
+        IOHIDEventRef hand = pDigitizerEvent(NULL, mach_absolute_time(),
+                                            (uint32_t)PH_HAND_TRANSDUCER_TYPE, 0, 0,
+                                            2, 0, 0, 0, 0, 0, 0, 1, 0, 0);
+        if (!hand) { PLog(@"[%@] hand 创建失败", tag); return NO; }
+        pSetIntegerValue(hand, (uint32_t)PH_FIELD_ISDISPLAYINTEGRATED, 1);      // ★ 关键标志
+
+        // ② finger 子事件：mask 固定 7
+        IOHIDEventRef finger = pFingerDouble(NULL, mach_absolute_time(), 1, 3, 7,
+                                             x, y, 0.0, 0.0, 0.0, TRUE, TRUE, 0);
+        if (!finger) { PLog(@"[%@] finger 创建失败", tag); CFRelease(hand); return NO; }
+        pSetFloatValue(finger, (uint32_t)PH_FIELD_MAJORRADIUS, 0.04);
+        pSetFloatValue(finger, (uint32_t)PH_FIELD_MINORRADIUS, 0.04);
+        pAppendEvent(hand, finger);                                            // 挂到 hand 上
+
+        // ③ 姿态 + SenderID
+        pSetIntegerValue(hand, (uint32_t)PH_FIELD_TILTX, (int64_t)PH_HAND_TRANSDUCER_TYPE);
+        pSetIntegerValue(hand, (uint32_t)PH_FIELD_TILTY, 1);
+        if (pSetSenderID) pSetSenderID(hand, PH_SENDER_ID);                     // ★ 老贝贝也设了
+
+        BOOL ok = (x != 0 || y != 0);
+        pDispatch(c, hand);
+        CFRelease(hand);
+        PLog(@"[%@] 照抄序列已派发（x=%.1f y=%.1f，IsDisplayIntegrated/TiltX/SenderID 齐）", tag, x, y);
+        return ok;
+    }
+
     // 造一"手指按下/抬起"对：style 决定事件怎么写
     IOHIDEventRef down = NULL, up = NULL;
     if (v->style == 2 && pDigitizerEvent) {
@@ -854,7 +899,7 @@ static void phSelftest(void) {
         PHTestSyntheticTap();
         PH_CHECK(g_tapTesting, @"触摸自检已启动（3 种方式依次点球）");
         g_tapTesting = NO;   // 复位，别影响后面的断言
-        PH_CHECK(PH_VARIANT_COUNT == 4, @"对照自检共 4 组变量组合");
+        PH_CHECK(PH_VARIANT_COUNT == 2, @"对照自检共 2 组（照抄老贝贝，只差坐标口径）");
         BOOL fired = PHFireVariant(&kTapVariants[0], CGPointMake(100, 300), @"自测组合A");
         PH_CHECK(fired, @"对照组合可派发（事件对象能创建）");
         // 模拟器/无真触摸环境：球不该收到触摸（探针基线）
