@@ -483,7 +483,7 @@ static void phCreateBall(void) {
          host.frame.origin.x, host.frame.origin.y, PH_BALL_D,
          (long)PHCfgI(@"phantom_ball_shape", 1), (int)g_ballCollapsed);
     PLog(@"球状态自证：%@", PHBallDiag());
-    PHToast([NSString stringWithFormat:@"幻影已就绪：球在左上 (%.0f, %.0f)，点它开面板",
+    PHToast([NSString stringWithFormat:@"幻影已就绪：悬浮按钮在 (%.0f, %.0f)，点它开面板",
              host.frame.origin.x, host.frame.origin.y]);
     // 脉冲一下，方便一眼找到球（解决"屏幕上找不到球"）
     host.transform = CGAffineTransformMakeScale(0.5, 0.5);
@@ -656,7 +656,7 @@ void PHTestSyntheticTap(void) {
     // 前置校验：没有球就没有判定基准，探针也装不上 → 会得出假的"事件没到屏幕"
     if (!g_ballWin || !g_ballHost) {
         PLog(@"❌ 自检中止：屏幕上没有悬浮球（%@）", PHBallDiag());
-        PHToast(@"❌ 自检中止：屏幕上没有悬浮球");
+        PHToast(@"❌ 自检中止：屏幕上没有悬浮按钮");
         PHShowLogPanel();
         return;
     }
@@ -692,7 +692,7 @@ void PHTestSyntheticTap(void) {
                     int probeNow = atomic_load(&g_probeHits);
                     NSString *res;
                     if (opened) {
-                        res = @"✅ 点击成功（球被点开）";
+                        res = @"✅ 点击成功（悬浮按钮被点开）";
                     } else if (probeNow > probeBase) {
                         res = [NSString stringWithFormat:@"★ 事件到达屏幕，落在 (%.0f,%.0f)",
                                g_probeLast.x, g_probeLast.y];
@@ -1053,7 +1053,7 @@ static void phantom_init(void) {
                        dispatch_get_main_queue(), ^{
             phCreateBall();
             if (selftest) { phSelftest(); return; }
-            PHToast(@"幻影已就绪：点悬浮球打开任务面板");
+            // 不在这里再弹横幅：它会覆盖 phCreateBall 里带坐标的那条提示
         });
     });
 }

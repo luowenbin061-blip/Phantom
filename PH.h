@@ -3,7 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
-#define PH_VERSION @"1.3"   // 幻影版本（球可见性自证 + 自检前置校验）
+#define PH_VERSION @"1.3.1"   // 幻影版本（术语统一 + 坐标提示不再被覆盖）
 
 #pragma mark - 主题
 #define PH_BG      [UIColor colorWithRed:0.173 green:0.173 blue:0.180 alpha:0.95]   // #2C2C2E 面板底
