@@ -76,7 +76,18 @@ static void (*pSetSenderID)(IOHIDEventRef, uint64_t);
 #define PH_FIELD_TILTX               0x000B000Du   // 值 0x23(35)
 #define PH_FIELD_TILTY               0x000B000Eu   // 值 1
 #define PH_HAND_TRANSDUCER_TYPE      0x23u         // 35 = Hand
+#define PH_FIELD_EXT                 0x000B000Fu   // 值 1（老贝贝 0xC0534 设的第三个字段，之前漏了）
 #define PH_SENDER_ID                 0xDEFACEDBEEFFECE5ULL
+// ★★ 反汇编挖到的关键缺失：老贝贝内部 dlopen 了 BackBoardServices 并调用
+//    BKSHIDEventSetDigitizerInfo(hand, phase, 0, 0, 0, 0.0, 0.0)
+//    地址链：0xC18B8 dlopen("/System/Library/PrivateFrameworks/BackBoardServices.framework/BackBoardServices", 2)
+//            0xC18DC dlsym(handle, "BKSHIDEventSetDigitizerInfo") → 存 [0x3fb340]
+//            0xC192C blr x8   ← 在 SetSenderID / DispatchEvent 之前调用
+typedef void (*PFBKSSetDigitizerInfo)(IOHIDEventRef, uint32_t, uint32_t, uint32_t, uint32_t, double, double);
+static PFBKSSetDigitizerInfo pBKSSetDigitizerInfo = NULL;
+static void *g_bksHandle = NULL;
+static BOOL phLoadBKS(void);
+
 static PFFingerFloat  pFingerFloat  = NULL;
 static PFFingerDouble pFingerDouble = NULL;
 
@@ -104,6 +115,19 @@ static BOOL phLoadIOKit(void) {
     PLog(@"符号解析：Create=%p CreateWithType=%p Dispatch=%p Schedule=%p Finger=%p",
          pCreate, pCreateWithType, pDispatch, pSchedule, pFingerFloat);
     return (pCreate && pDispatch && pFingerFloat);
+}
+
+// ★ 老贝贝的关键一步：告诉 BackBoard 这是"显示集成的手指"事件
+static BOOL phLoadBKS(void) {
+    g_bksHandle = dlopen("/System/Library/PrivateFrameworks/BackBoardServices.framework/BackBoardServices", RTLD_NOW);
+    if (!g_bksHandle) {
+        PLog(@"❌ BackBoardServices dlopen 失败: %s", dlerror());
+        return NO;
+    }
+    pBKSSetDigitizerInfo = (PFBKSSetDigitizerInfo)dlsym(g_bksHandle, "BKSHIDEventSetDigitizerInfo");
+    PLog(@"BackBoardServices 加载：handle=%p BKSHIDEventSetDigitizerInfo=%p（老贝贝同款）",
+         g_bksHandle, pBKSSetDigitizerInfo);
+    return pBKSSetDigitizerInfo != NULL;
 }
 
 // 合成一次点击（归一化坐标 0~1）；策略 0/1/2 = 三种 client 创建方式
@@ -555,13 +579,17 @@ typedef struct {
     BOOL normalized;
     int  clientKind;      // 0=Create, 1=CreateWithType(HID=1), 2=CreateWithType(Admin=0)
     BOOL schedule;
-    int  style;           // 0=finger 单发, 1=hand 套 finger, 2=DigitizerEvent 直连
+    int  style;           // 0=finger 单发, 1=hand 套 finger, 2=DigitizerEvent 直连, 3=照抄, 4=照抄+BKS
+    uint32_t phase1;      // BKS 的 phase 参数（按下用）
+    uint32_t phase2;      // BKS 的 phase 参数（抬起用；与 phase1 相同则只发一次）
 } PHTapVariant;
 
-// 第三轮：完全照抄老贝贝的调用序列，只差"坐标口径"这一个变量
+// 第四轮：补上老贝贝的关键一步 BKSHIDEventSetDigitizerInfo，只差 phase 取值
 static const PHTapVariant kTapVariants[] = {
-    {"Z_照抄老贝贝+点坐标",   YES, NO,  0, YES, 3},
-    {"W_照抄老贝贝+归一化",   YES, YES, 0, YES, 3},
+    {"A_BKS_phase1",     YES, NO, 0, NO, 4, 1, 2},   // 按下 phase1 → 抬起 phase2
+    {"B_BKS_phase1单发", YES, NO, 0, NO, 4, 1, 1},
+    {"C_BKS_phase2单发", YES, NO, 0, NO, 4, 2, 2},
+    {"D_BKS_phase0单发", YES, NO, 0, NO, 4, 0, 0},
 };
 #define PH_VARIANT_COUNT (sizeof(kTapVariants) / sizeof(kTapVariants[0]))
 
@@ -580,6 +608,32 @@ static IOHIDEventSystemClientRef PHClientForKind(int kind) {
     } @catch (NSException *e) { PLog(@"client(%d) 异常: %@", kind, e); return NULL; }
 }
 
+// 照抄老贝贝：发"一次手指状态"（按下或抬起），含 BKS 那一步
+static void PHFireOne(IOHIDEventSystemClientRef c, uint32_t phase, BOOL touch,
+                      double x, double y, NSString *tag) {
+    IOHIDEventRef hand = pDigitizerEvent(NULL, mach_absolute_time(),
+                                        (uint32_t)PH_HAND_TRANSDUCER_TYPE, 0, 0,
+                                        2, 0, 0, 0, 0, 0, 0, 1, 0, 0);
+    if (!hand) { PLog(@"[%@] hand 创建失败", tag); return; }
+    pSetIntegerValue(hand, (uint32_t)PH_FIELD_ISDISPLAYINTEGRATED, 1);
+    IOHIDEventRef f = pFingerDouble(NULL, mach_absolute_time(), 1, 1, 7,
+                                    x, y, 0.0, 0.0, 0.0, touch, touch, 0);
+    if (f) {
+        pSetFloatValue(f, (uint32_t)PH_FIELD_MAJORRADIUS, 0.04);
+        pSetFloatValue(f, (uint32_t)PH_FIELD_MINORRADIUS, 0.04);
+        pAppendEvent(hand, f);
+    }
+    pSetIntegerValue(hand, (uint32_t)PH_FIELD_TILTX, (int64_t)PH_HAND_TRANSDUCER_TYPE);
+    pSetIntegerValue(hand, (uint32_t)PH_FIELD_TILTY, 1);
+    pSetIntegerValue(hand, (uint32_t)PH_FIELD_EXT, 1);                       // 老贝贝同款第三字段
+    if (pBKSSetDigitizerInfo) pBKSSetDigitizerInfo(hand, phase, 0, 0, 0, 0.0, 0.0);  // ★ 关键一步
+    if (pSetSenderID) pSetSenderID(hand, PH_SENDER_ID);
+    pDispatch(c, hand);
+    CFRelease(hand);
+    PLog(@"[%@] 已发（touch=%d phase=%u BKS=%d）", tag, (int)touch, phase,
+         pBKSSetDigitizerInfo != NULL);
+}
+
 // 按一组变量发一次点击；返回 NO = 事件没造出来
 static BOOL PHFireVariant(const PHTapVariant *v, CGPoint ptPts, NSString *tag) {
     IOHIDEventSystemClientRef c = PHClientForKind(v->clientKind);
@@ -590,6 +644,18 @@ static BOOL PHFireVariant(const PHTapVariant *v, CGPoint ptPts, NSString *tag) {
     CGSize S = PHBallScreenSize();
     double x = v->normalized ? (ptPts.x / S.width)  : ptPts.x;
     double y = v->normalized ? (ptPts.y / S.height) : ptPts.y;
+    // ══ style 4：照抄老贝贝 + 补上 BKSHIDEventSetDigitizerInfo（反汇编挖出的缺失环节）══
+    if (v->style == 4 && pDigitizerEvent && pFingerDouble && pAppendEvent &&
+        pSetIntegerValue && pSetFloatValue) {
+        PHFireOne(c, v->phase1, YES, x, y, tag);
+        if (v->phase2 != v->phase1) {
+            usleep(90000);
+            PHFireOne(c, v->phase2, NO, x, y, tag);
+        }
+        PLog(@"[%@] BKS 序列完成（phase %u→%u，x=%.1f y=%.1f）", tag, v->phase1, v->phase2, x, y);
+        return YES;
+    }
+
     // ══ style 3：完全照抄老贝贝（hand 事件 + finger append + 姿态 + SenderID）══
     if (v->style == 3 && pDigitizerEvent && pFingerDouble && pAppendEvent &&
         pSetIntegerValue && pSetFloatValue) {
@@ -949,7 +1015,7 @@ static void phSelftest(void) {
         PHTestSyntheticTap();
         PH_CHECK(g_tapTesting, @"触摸自检已启动（3 种方式依次点球）");
         g_tapTesting = NO;   // 复位，别影响后面的断言
-        PH_CHECK(PH_VARIANT_COUNT == 2, @"对照自检共 2 组（照抄老贝贝，只差坐标口径）");
+        PH_CHECK(PH_VARIANT_COUNT == 4, @"对照自检共 4 组（照抄老贝贝 + BKS，只差 phase 取值）");
         BOOL fired = PHFireVariant(&kTapVariants[0], CGPointMake(100, 300), @"自测组合A");
         PH_CHECK(fired, @"对照组合可派发（事件对象能创建）");
         // 模拟器/无真触摸环境：球不该收到触摸（探针基线）
@@ -1045,6 +1111,7 @@ static void phantom_init(void) {
                    dispatch_get_main_queue(), ^{
         PLog(@"Phantom v%@ 注入加载（完整 UI + 主面板重做）", PH_VERSION);
         g_iokitReady = phLoadIOKit();
+        phLoadBKS();          // ★ 老贝贝的关键一步（BackBoard 的 digitizer 信息）
 
         NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
         BOOL selftest = [ud boolForKey:@"phantom_selftest"];
