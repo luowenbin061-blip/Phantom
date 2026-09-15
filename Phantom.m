@@ -599,6 +599,13 @@ static void phSelftest(void) {
         if (ev) CFRelease(ev);
     }
     PH_CHECK(g_ballWin != nil, @"悬浮球已创建");
+    {
+        CGSize S0 = PHBallScreenSize();
+        PH_CHECK(g_ballHost.frame.size.width >= PH_BALL_D - 0.5 &&
+                 g_ballHost.frame.origin.x >= -0.5 &&
+                 g_ballHost.frame.origin.x + g_ballHost.frame.size.width <= S0.width + 0.5,
+                 @"启动即完整显示（球形态、不出屏，无需手动点一下）");
+    }
 
     // v0.4：悬浮球行为（拖动保存 / 形状 / 图标复位 / 重建）
     NSUserDefaults *udB = [NSUserDefaults standardUserDefaults];
@@ -645,12 +652,11 @@ static void phSelftest(void) {
     // v0.7：① 启动即完整显示 ② 拖出边缘即收纳
     [udB setInteger:1 forKey:@"phantom_edge_hide"];
     [udB setInteger:0 forKey:@"phantom_ball_attach"];
-    g_ballHost.frame = CGRectMake(SZ.width - PH_STRIP_W, 300, PH_BALL_D, PH_BALL_D);  // 模拟"上次退出是收纳态"
+    g_ballHost.frame = CGRectMake(SZ.width - PH_BALL_D, 300, PH_BALL_D, PH_BALL_D);  // 贴右边缘但完整可见
     PHBallSettle();
     PH_CHECK(g_ballHost.frame.size.width >= PH_BALL_D - 0.5 &&
-             g_ballHost.frame.origin.x >= -0.5 &&
-             g_ballHost.frame.origin.x + PH_BALL_D <= SZ.width + 0.5,
-             @"启动/松手后球完整可见（不会只露一条）");
+             g_ballHost.frame.origin.x + g_ballHost.frame.size.width <= SZ.width + 0.5,
+             @"贴边位置松手后仍是完整球（不会被误判成拖出而残缺）");
     PHBallSetCollapsed(NO);
     g_ballHost.frame = CGRectMake(SZ.width + 30, 300, PH_BALL_D, PH_BALL_D);         // 拖出右边缘
     PHBallSettle();
