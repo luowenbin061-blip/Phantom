@@ -487,6 +487,17 @@ void PHRefreshMenuIfVisible(void) {
     if (g_mWin && g_mListHost) PHBuildMenuList(NO);
 }
 
+// 判定基准：只有「主面板」打开才算悬浮球被点开（通用面板开着不算）
+BOOL PHIsMainMenuOpen(void) {
+    return (g_mWin != nil && !g_mWin.hidden);
+}
+
+// 自检前清场：把主面板和通用面板都关掉，露出球、排除干扰
+void PHCloseAllPanels(void) {
+    PHClosePanel();
+    PHCloseMenu();
+}
+
 #pragma mark - 添加动作卡片（9 项）
 
 @interface PHAddActions : NSObject

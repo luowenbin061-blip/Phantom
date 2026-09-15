@@ -438,22 +438,22 @@ void PHTestSyntheticTap(void) {
     if (!g_tapResults) g_tapResults = [NSMutableArray array];
     [g_tapResults removeAllObjects];
     PLog(@"===== 触摸合成自检开始（3 种方式各点一次悬浮球）=====");
-    PHToast(@"自检开始：约 8 秒，看有没有方式能让球自己弹开");
+    PHToast(@"自检开始：约 8 秒，期间别碰屏幕");
 
     for (int i = 0; i < 3; i++) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((1.0 + i * 2.5) * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             NSString *tag = @[@"策略A", @"策略B", @"策略C"][i];
-            PHCloseMenu();                                   // 先露出球
+            PHCloseAllPanels();                              // 清场：露出球，且没有其他面板干扰判定
             PHToast([NSString stringWithFormat:@"%@：正在点悬浮球…", tag]);
             phTapStrategy(i, PHBallCenterNormalized(), tag);
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
-                BOOL worked = PHIsPanelOpen();               // 球被点开 → 面板自己弹了
+                BOOL worked = PHIsMainMenuOpen();            // 只有主面板弹了才算球真被点开
                 NSString *line = [NSString stringWithFormat:@"%@ %@", tag, worked ? @"有效" : @"无效"];
                 [g_tapResults addObject:line];
                 PLog(@"tap test → %@", line);
-                PHCloseMenu();
+                PHCloseAllPanels();
                 if (i == 2) {
                     g_tapTesting = NO;
                     NSInteger good = 0;
@@ -680,6 +680,11 @@ static void phSelftest(void) {
     {
         CGPoint nb = PHBallCenterNormalized();
         PH_CHECK(nb.x > 0 && nb.x < 1 && nb.y > 0 && nb.y < 1, @"球中心归一化坐标有效（自检要用的落点）");
+        PHCloseAllPanels();
+        PH_CHECK(!PHIsMainMenuOpen(), @"清场后主面板判定为关（自检判定基准正确，不会假阳性）");
+        PHShowMenu();
+        PH_CHECK(PHIsMainMenuOpen(), @"点开后主面板判定为开");
+        PHCloseAllPanels();
         g_tapTesting = NO;
         PHTestSyntheticTap();
         PH_CHECK(g_tapTesting, @"触摸自检已启动（3 种方式依次点球）");

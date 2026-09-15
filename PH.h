@@ -114,3 +114,5 @@ void PHResetBallIcon(void);                    // 恢复默认图标
 void PHBallNotifyActivity(void);                // 通知"有操作"（展开 + 重排 20 秒收纳计时）
 void PHCloseMenu(void);                         // 关主面板（自检前要露出悬浮球）
 void PHTestSyntheticTap(void);                  // 触摸合成自检：3 种方式各点一次球，自动判结果
+BOOL PHIsMainMenuOpen(void);                    // 主面板是否打开（自检判定基准：只有主面板打开才算球被点开）
+void PHCloseAllPanels(void);                    // 关掉所有面板（自检前清场）
