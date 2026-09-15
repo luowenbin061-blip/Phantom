@@ -16,7 +16,6 @@
 #import <stdatomic.h>
 #import "PH.h"
 
-static void PHShowLogPanel(void);
 static void phCreateBall(void);
 
 #pragma mark - 日志
