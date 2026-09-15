@@ -594,11 +594,11 @@ static BOOL PHFireVariant(const PHTapVariant *v, CGPoint ptPts, NSString *tag) {
         // hand 包 finger（社区通用写法）：hand 事件里 append 一个 finger
         IOHIDEventRef hDown = pDigitizerEvent(NULL, mach_absolute_time(), 3, 0, 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         IOHIDEventRef fDown = pFingerDouble(NULL, mach_absolute_time(), 1, 2, 7, x, y, 0.0, 0.62, 0.0, TRUE, TRUE, 0);
-        if (hDown && fDown) { pAppendEvent(hDown, fDown, 0); down = hDown; }
+        if (hDown && fDown) { pAppendEvent(hDown, fDown); down = hDown; }
         usleep(60000);
         IOHIDEventRef hUp = pDigitizerEvent(NULL, mach_absolute_time(), 3, 0, 1, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         IOHIDEventRef fUp = pFingerDouble(NULL, mach_absolute_time(), 1, 2, 3, x, y, 0.0, 0.0, 0.0, FALSE, FALSE, 0);
-        if (hUp && fUp) { pAppendEvent(hUp, fUp, 0); up = hUp; }
+        if (hUp && fUp) { pAppendEvent(hUp, fUp); up = hUp; }
     } else if (pFingerDouble) {
         down = pFingerDouble(NULL, mach_absolute_time(), 1, 2, 7, x, y, 0.0, 0.62, 0.0, TRUE, TRUE, 0);
         usleep(60000);
