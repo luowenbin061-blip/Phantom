@@ -565,7 +565,23 @@ static NSInteger g_editIndex = -1;
 + (void)onRegion    { PHShowPointPicker(g_editIndex, NO, YES); }
 + (void)onImages    { PHShowTemplatePicker(g_editIndex); }
 + (void)onColors    { PHShowColorPicker(g_editIndex); }
-+ (void)onRecord    { PHToast(@"录制功能将在后续阶段接入"); }
++ (void)onRecord {
+    NSInteger idx = g_editIndex;
+    if (idx < 0 || idx >= (NSInteger)PHActions().count) return;
+    PHAction *a = [PHActions() objectAtIndex:(NSUInteger)idx];
+    if (PHIsRecording()) {
+        NSArray<NSDictionary *> *evs = PHRecordStop();
+        [a.recordEvents removeAllObjects];
+        [a.recordEvents addObjectsFromArray:evs];
+        PHSaveTasks();
+        PHToast(evs.count ? [NSString stringWithFormat:@"录制完成：%lu 个点", (unsigned long)evs.count]
+                          : @"没抓到触摸（确定点的是这个 App 的界面？）");
+    } else {
+        PHRecordStart();
+        PHToast(@"开始录制：操作屏幕，再点这一行停止");
+    }
+    PHShowActionEdit(idx);
+}
 + (void)onSuccess   { PHToast(@"「识别成功后动作」将在识别引擎阶段接入"); }
 + (void)onDelete    {
     if (g_editIndex >= 0 && g_editIndex < (NSInteger)[PHActions() count]) {
@@ -761,8 +777,20 @@ void PHShowActionEdit(NSInteger index) {
     [[NSUserDefaults standardUserDefaults] setObject:(t ?: @"1") forKey:@"phantom_loop"];
     PHShowSettings();
 }); }
-+ (void)onStartAt  { PHToast(@"定时启动将在执行引擎阶段接入"); }
-+ (void)onStopAt   { PHToast(@"定时停止将在执行引擎阶段接入"); }
++ (void)onStartAt  {
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    PHInputCard(@"定时启动（HH:mm）", @"到点自动开始执行；留空 = 关闭", [ud stringForKey:@"phantom_start_at"] ?: @"", ^(NSString *t) {
+        [ud setObject:(t ?: @"") forKey:@"phantom_start_at"];
+        PHToast(t.length ? [NSString stringWithFormat:@"定时启动：%@", t] : @"已关闭定时启动");
+    });
+}
++ (void)onStopAt   {
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    PHInputCard(@"定时停止（HH:mm）", @"到点自动停止执行；留空 = 关闭", [ud stringForKey:@"phantom_stop_at"] ?: @"", ^(NSString *t) {
+        [ud setObject:(t ?: @"") forKey:@"phantom_stop_at"];
+        PHToast(t.length ? [NSString stringWithFormat:@"定时停止：%@", t] : @"已关闭定时停止");
+    });
+}
 + (void)onScripts  { PHShowScripts(); }
 + (void)onBallShape:(UISegmentedControl *)s {
     [[NSUserDefaults standardUserDefaults] setInteger:s.selectedSegmentIndex forKey:@"phantom_ball_shape"];
@@ -906,21 +934,60 @@ void PHShowSettings(void) {
 @end
 
 @implementation PHScriptActions
-+ (void)onSave   { PHSaveTasks(); PHToast(@"已保存当前配置"); }
-+ (void)onLoad   { PHToast(@"多脚本管理将在后续阶段接入（当前为单配置自动保存）"); }
-+ (void)onShare  { PHToast(@"分享脚本将在后续阶段接入"); }
-+ (void)onRename { PHToast(@"重命名将在后续阶段接入"); }
-+ (void)onDelete { PHToast(@"删除脚本将在后续阶段接入"); }
++ (void)onSave {
+    NSArray<NSString *> *list = PHScriptList();
+    PHInputCard(@"保存脚本", @"给这组动作起个名字", [NSString stringWithFormat:@"脚本%lu", (unsigned long)list.count + 1], ^(NSString *t) {
+        if (!t.length) return;
+        PHToast(PHScriptSave(t) ? [NSString stringWithFormat:@"已保存：%@", t] : @"保存失败");
+    });
+}
++ (void)onLoad {
+    NSArray<NSString *> *list = PHScriptList();
+    PHInputCard(@"加载脚本", [NSString stringWithFormat:@"已有：%@",
+                             list.count ? [list componentsJoinedByString:@", "] : @"（还没有脚本）"],
+                list.count ? list.firstObject : @"", ^(NSString *t) {
+        if (!t.length) return;
+        if (PHScriptLoad(t)) { PHToast([NSString stringWithFormat:@"已加载：%@", t]); PHRefreshMenuIfVisible(); }
+        else PHToast(@"加载失败（名字不对？）");
+    });
+}
++ (void)onShare {
+    NSArray<NSString *> *list = PHScriptList();
+    PHInputCard(@"分享脚本", [NSString stringWithFormat:@"已有：%@",
+                             list.count ? [list componentsJoinedByString:@", "] : @"（还没有脚本）"],
+                list.count ? list.firstObject : @"", ^(NSString *t) {
+        if (t.length) PHScriptShare(t);
+    });
+}
++ (void)onRename {
+    NSArray<NSString *> *list = PHScriptList();
+    PHInputCard(@"重命名脚本", @"填「旧名字」", list.count ? list.firstObject : @"", ^(NSString *old_) {
+        if (!old_.length) return;
+        PHInputCard(@"重命名脚本", @"填「新名字」", old_, ^(NSString *new_) {
+            if (!new_.length) return;
+            PHToast(PHScriptRename(old_, new_) ? @"已重命名" : @"重命名失败（新名已存在？）");
+        });
+    });
+}
++ (void)onDelete {
+    NSArray<NSString *> *list = PHScriptList();
+    PHInputCard(@"删除脚本", [NSString stringWithFormat:@"已有：%@",
+                             list.count ? [list componentsJoinedByString:@", "] : @"（还没有脚本）"],
+                list.count ? list.firstObject : @"", ^(NSString *t) {
+        if (!t.length) return;
+        PHToast(PHScriptDelete(t) ? [NSString stringWithFormat:@"已删除：%@", t] : @"删除失败");
+    });
+}
 @end
 
 void PHShowScripts(void) {
     PHPanelBegin(@"脚本文件管理", 0.66, NO);
-    PHPanelNote(@"当前为「单配置 + 自动保存」模式：退出 App 前会自动存到沙盒。");
+    PHPanelNote(@"当前动作列表会自动存沙盒；下面可以把这套动作另存成命名脚本，随时切回来。");
     PHPanelSection(@"当前配置");
     PHPanelAdd(PHFieldRowPlain([NSString stringWithFormat:@"phantom_tasks.json · %lu 个动作",
                                 (unsigned long)PHActions().count], g_pW), 0);
     PHPanelSection(@"操作");
-    PHPanelAdd(PHFieldRow(@"保存当前配置", g_pW, [PHScriptActions class], @selector(onSave)), 0);
+    PHPanelAdd(PHFieldRow(@"保存为新脚本", g_pW, [PHScriptActions class], @selector(onSave)), 0);
     PHPanelAdd(PHFieldRow(@"加载脚本", g_pW, [PHScriptActions class], @selector(onLoad)), 8);
     PHPanelAdd(PHFieldRow(@"分享脚本", g_pW, [PHScriptActions class], @selector(onShare)), 8);
     PHPanelAdd(PHFieldRow(@"重命名", g_pW, [PHScriptActions class], @selector(onRename)), 8);

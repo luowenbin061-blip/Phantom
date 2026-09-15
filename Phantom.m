@@ -1132,6 +1132,20 @@ static void phSelftest(void) {
         PH_CHECK(crop != nil, @"识别引擎：区域裁剪可用");
     }
 
+    // v1.7：录制 / 脚本管理 / 定时
+    {
+        PHRecordStart();
+        PH_CHECK(PHIsRecording(), @"录制可启动（sendEvent 钩子装上）");
+        (void)PHRecordStop();
+        PH_CHECK(!PHIsRecording(), @"录制可停止");
+        PH_CHECK(PHScriptSave(@"自测脚本"), @"脚本可保存");
+        NSArray<NSString *> *ls = PHScriptList();
+        PH_CHECK([ls containsObject:@"自测脚本"], @"脚本可列出");
+        PH_CHECK(PHScriptRename(@"自测脚本", @"自测脚本2"), @"脚本可重命名");
+        PH_CHECK(PHScriptDelete(@"自测脚本2"), @"脚本可删除");
+        PH_CHECK(PHScriptList().count == ls.count - 1, @"删除后脚本数量恢复");
+    }
+
     NSString *doc = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
     [g_stLog writeToFile:[doc stringByAppendingPathComponent:@"Phantom_selftest.txt"]
               atomically:YES encoding:NSUTF8StringEncoding error:nil];
@@ -1167,6 +1181,7 @@ static void phantom_init(void) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             phCreateBall();
+            PHStartAutoTimer();          // 定时启停（每秒检查一次）
             if (selftest) { phSelftest(); return; }
             // 不在这里再弹横幅：它会覆盖 phCreateBall 里带坐标的那条提示
         });

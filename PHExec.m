@@ -102,9 +102,24 @@ static void phExAction(PHAction *a) {
             }
             break;
         }
-        case PHActionTypeRecord:
-            PHLogLine(@"  录制回放：尚未接入（下一阶段）");
+        case PHActionTypeRecord: {
+            if (!a.recordEvents.count) { PHLogLine(@"  回放：还没有录制内容"); return; }
+            double scale = a.replayScale > 0.05 ? a.replayScale : 1.0;
+            PHLogLine([NSString stringWithFormat:@"  回放 %lu 个触摸点（%.1f 倍速）",
+                       (unsigned long)a.recordEvents.count, scale]);
+            double prev = 0;
+            for (NSDictionary *e in a.recordEvents) {
+                if (g_exStop) break;
+                double t = [e[@"t"] doubleValue] / scale;
+                double gap = (t - prev) * 1000.0;
+                if (gap > 0 && !phExSleep(gap)) break;
+                double x = [e[@"x"] doubleValue], y = [e[@"y"] doubleValue];
+                uint32_t phase = (uint32_t)[e[@"p"] integerValue];
+                PHFireTapPts(x, y, phase, phase == 1);
+                prev = t;
+            }
             break;
+        }
     }
 }
 
@@ -146,4 +161,34 @@ void PHRunTask(void) {
             PHRefreshMenuIfVisible();
         });
     });
+}
+
+#pragma mark - 定时启停（设置里配 HH:mm，到点自动开始 / 停止）
+
+static NSTimer *g_autoTimer = nil;
+
+void PHStartAutoTimer(void) {
+    if (g_autoTimer) return;
+    g_autoTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
+        NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+        NSDateFormatter *f = [[NSDateFormatter alloc] init];
+        f.dateFormat = @"HH:mm";
+        NSString *now = [f stringFromDate:[NSDate date]];
+
+        NSString *sAt = [ud stringForKey:@"phantom_start_at"];
+        if (sAt.length == 5 && [sAt isEqualToString:now] &&
+            ![[ud stringForKey:@"phantom_last_start"] isEqualToString:now]) {
+            [ud setObject:now forKey:@"phantom_last_start"];
+            PHLogLine([NSString stringWithFormat:@"定时到点 %@ → 开始执行", now]);
+            PHRunTask();
+        }
+        NSString *eAt = [ud stringForKey:@"phantom_stop_at"];
+        if (eAt.length == 5 && [eAt isEqualToString:now] &&
+            ![[ud stringForKey:@"phantom_last_stop"] isEqualToString:now]) {
+            [ud setObject:now forKey:@"phantom_last_stop"];
+            PHLogLine([NSString stringWithFormat:@"定时到点 %@ → 停止执行", now]);
+            PHStopTask();
+        }
+    }];
+    PHLogLine(@"定时启停检查已启动（每秒一次）");
 }

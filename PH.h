@@ -3,7 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
-#define PH_VERSION @"1.6"   // 幻影版本（识别引擎：识字/识色/识图）
+#define PH_VERSION @"1.7"   // 幻影版本（识别引擎 + 录制回放 + 定时 + 脚本管理）
 
 #pragma mark - 主题
 #define PH_BG      [UIColor colorWithRed:0.173 green:0.173 blue:0.180 alpha:0.95]   // #2C2C2E 面板底
@@ -136,3 +136,17 @@ BOOL PHColorHitInImage(UIImage *img, NSArray<NSString *> *colors, double similar
 NSString *PHColorHexAtPoint(CGPoint p);            // 取屏幕上某点的颜色（十六进制）
 void PHShowTemplatePicker(NSInteger actionIndex);  // 相册选识图模板
 void PHShowColorPicker(NSInteger actionIndex);     // 点屏取色（识色用）
+
+#pragma mark - 录制 / 脚本 / 定时
+void PHRecordStart(void);                          // 开始录制（捕获真实触摸）
+NSArray<NSDictionary *> *PHRecordStop(void);       // 停止录制并取回事件
+BOOL PHIsRecording(void);
+NSInteger PHRecordCount(void);
+NSArray<NSString *> *PHScriptList(void);           // 已有脚本名
+NSString *PHScriptPath(NSString *name);
+BOOL PHScriptSave(NSString *name);
+BOOL PHScriptLoad(NSString *name);
+BOOL PHScriptDelete(NSString *name);
+BOOL PHScriptRename(NSString *from, NSString *to);
+void PHScriptShare(NSString *name);
+void PHStartAutoTimer(void);                       // 启动定时启停检查（每秒一次）
