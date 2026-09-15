@@ -25,10 +25,10 @@ jobs:
             -O2
             -Wall
             -install_name @rpath/Phantom.dylib
-            -o Phantom.dylib Phantom.m PHTheme.m PHModel.m PHUI.m PHPick.m PHExec.m
+            -o Phantom.dylib Phantom.m PHTheme.m PHModel.m PHUI.m PHPick.m PHExec.m PHVision.m
             -I.
             -framework Foundation -framework UIKit
-            -framework CoreGraphics -framework QuartzCore
+            -framework CoreGraphics -framework QuartzCore -framework Vision
           )
           "${BUILD_CMD[@]}"
           # 缺 LC_DYLD_CHAINED_FIXUPS 时 dyld 会静默拒绝加载

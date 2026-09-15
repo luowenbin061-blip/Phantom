@@ -1114,6 +1114,24 @@ static void phSelftest(void) {
         PH_CHECK(PHActions().count == cntBefore - 1, @"执行器测试动作已清理");
     }
 
+    // v1.6：识别引擎（截屏 / 识色判定 / 取色）
+    {
+        UIImage *shot = PHCaptureScreen();
+        PH_CHECK(shot != nil, @"识别引擎：截屏可用");
+        UIGraphicsImageRendererFormat *f2 = [[UIGraphicsImageRendererFormat alloc] init];
+        f2.scale = 1.0; f2.opaque = YES;
+        UIGraphicsImageRenderer *r2 = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(20, 20) format:f2];
+        UIImage *red = [r2 imageWithActions:^(UIGraphicsImageRendererContext *rc) {
+            [[UIColor redColor] setFill];
+            UIRectFill(CGRectMake(0, 0, 20, 20));
+        }];
+        PH_CHECK(PHColorHitInImage(red, @[@"#FF0000"], 0.9, NULL, NULL), @"识色：纯红图命中红");
+        PH_CHECK(!PHColorHitInImage(red, @[@"#0000FF"], 0.9, NULL, NULL), @"识色：纯红图不命中蓝");
+        CGRect full = CGRectMake(0, 0, 20, 20);
+        UIImage *crop = PHCropRegionPts(red, full);
+        PH_CHECK(crop != nil, @"识别引擎：区域裁剪可用");
+    }
+
     NSString *doc = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
     [g_stLog writeToFile:[doc stringByAppendingPathComponent:@"Phantom_selftest.txt"]
               atomically:YES encoding:NSUTF8StringEncoding error:nil];

@@ -12,6 +12,7 @@ static CGPoint   g_pkStart  = {0, 0};
 static NSInteger g_pkIndex  = -1;
 static BOOL      g_pkForB   = NO;
 static BOOL      g_pkRegion = NO;
+static BOOL      g_pkColor  = NO;   // 取色模式（点屏取色）
 
 @interface PHPickActions : NSObject
 + (void)onCancel;
@@ -33,6 +34,20 @@ static void phPickFinish(CGPoint a, CGPoint b) {
     phPickClose();
     if (idx < 0 || idx >= (NSInteger)acts.count) { PHToast(@"动作已不存在"); return; }
     PHAction *act = [acts objectAtIndex:(NSUInteger)idx];
+    if (g_pkColor) {
+        // 覆盖层已关闭 → 等一拍再截屏取色（免得把选点层拍进去）
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            NSString *hex = PHColorHexAtPoint(a);
+            if (!hex) { PHToast(@"取色失败"); return; }
+            [act.colorList addObject:hex];
+            PHSaveTasks();
+            PHLogLine([NSString stringWithFormat:@"已取色：%@ (%.0f, %.0f)", hex, a.x, a.y]);
+            PHToast([NSString stringWithFormat:@"已取色 %@", hex]);
+            PHShowActionEdit(idx);
+        });
+        return;
+    }
     if (region) {
         act.regionText = [NSString stringWithFormat:@"%.0f,%.0f,%.0f,%.0f", a.x, a.y, b.x, b.y];
         PHLogLine([NSString stringWithFormat:@"选区已设置：%@ → (%.0f,%.0f) %.0fx%.0f",
@@ -69,7 +84,7 @@ static void phPickFinish(CGPoint a, CGPoint b) {
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     UITouch *t = touches.anyObject;
     g_pkStart = [t locationInView:self];
-    if (g_pkRegion) {
+    if (g_pkRegion && !g_pkColor) {
         g_pkRect.hidden = NO;
         g_pkRect.frame = CGRectMake(g_pkStart.x, g_pkStart.y, 0.0, 0.0);
     }
@@ -115,6 +130,14 @@ static void phPickFinish(CGPoint a, CGPoint b) {
 }
 @end
 
+// 取色：点屏取色（复用选点覆盖层）
+void PHShowColorPicker(NSInteger actionIndex) {
+    PHShowPointPicker(actionIndex, NO, NO);
+    g_pkColor = YES;
+    if (g_pkHint) g_pkHint.text = @"点一下要取色的位置";
+    PHLogLine(@"取色器打开");
+}
+
 void PHShowPointPicker(NSInteger actionIndex, BOOL forPointB, BOOL regionMode) {
     if (PHIsPanelOpen()) PHCloseAllPanels();      // 收起面板，露出要选的那一层屏幕
     if (g_pkWin) phPickClose();
@@ -123,6 +146,7 @@ void PHShowPointPicker(NSInteger actionIndex, BOOL forPointB, BOOL regionMode) {
     CGSize S = scene.screen.bounds.size;
 
     g_pkIndex = actionIndex; g_pkForB = forPointB; g_pkRegion = regionMode;
+    if (!regionMode && !forPointB) g_pkColor = NO;   // 普通选点默认关闭取色（PHShowColorPicker 之后会置回）
 
     UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
     w.frame = CGRectMake(0, 0, S.width, S.height);

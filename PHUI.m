@@ -563,8 +563,8 @@ static NSInteger g_editIndex = -1;
 + (void)onPointA    { PHShowPointPicker(g_editIndex, NO, NO); }
 + (void)onPointB    { PHShowPointPicker(g_editIndex, YES, NO); }
 + (void)onRegion    { PHShowPointPicker(g_editIndex, NO, YES); }
-+ (void)onImages    { PHToast(@"图像选择将在识图引擎阶段接入"); }
-+ (void)onColors    { PHToast(@"取色器将在识色引擎阶段接入"); }
++ (void)onImages    { PHShowTemplatePicker(g_editIndex); }
++ (void)onColors    { PHShowColorPicker(g_editIndex); }
 + (void)onRecord    { PHToast(@"录制功能将在后续阶段接入"); }
 + (void)onSuccess   { PHToast(@"「识别成功后动作」将在识别引擎阶段接入"); }
 + (void)onDelete    {

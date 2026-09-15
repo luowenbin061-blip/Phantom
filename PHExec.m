@@ -56,6 +56,8 @@ static void phExSwipe(PHAction *a) {
                a.pointA.x, a.pointA.y, a.pointB.x, a.pointB.y, (long)n, MAX(10.0, a.swipeMs)]);
 }
 
+static void phExAction(PHAction *a);   // 前置声明（「识别成功后动作」要递归调用自己）
+
 // 执行一条动作（识别类留到识别引擎阶段）
 static void phExAction(PHAction *a) {
     switch (a.type) {
@@ -82,14 +84,24 @@ static void phExAction(PHAction *a) {
             phExSleep(MAX(0.0, a.waitMs));
             break;
         case PHActionTypeText:
-            PHLogLine(@"  识字：识别引擎尚未接入（下一阶段）");
-            break;
         case PHActionTypeImage:
-            PHLogLine(@"  识图：识别引擎尚未接入（下一阶段）");
+        case PHActionTypeColor: {
+            NSString *what = [PHAction typeName:a.type];
+            BOOL hit = PHRecognizeAction(a);
+            if (hit) {
+                if (a.successActions.count) {
+                    PHLogLine([NSString stringWithFormat:@"  %@ 命中 → 执行「识别成功后动作」%lu 条",
+                               what, (unsigned long)a.successActions.count]);
+                    for (PHAction *sub in a.successActions) {
+                        if (g_exStop) break;
+                        phExAction(sub);
+                    }
+                } else {
+                    PHLogLine([NSString stringWithFormat:@"  %@ 命中（没配「识别成功后动作」）", what]);
+                }
+            }
             break;
-        case PHActionTypeColor:
-            PHLogLine(@"  识色：识别引擎尚未接入（下一阶段）");
-            break;
+        }
         case PHActionTypeRecord:
             PHLogLine(@"  录制回放：尚未接入（下一阶段）");
             break;

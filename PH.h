@@ -3,7 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
-#define PH_VERSION @"1.5"   // 幻影版本（坐标选择器 + 执行器）
+#define PH_VERSION @"1.6"   // 幻影版本（识别引擎：识字/识色/识图）
 
 #pragma mark - 主题
 #define PH_BG      [UIColor colorWithRed:0.173 green:0.173 blue:0.180 alpha:0.95]   // #2C2C2E 面板底
@@ -126,3 +126,13 @@ void PHShowPointPicker(NSInteger actionIndex, BOOL forPointB, BOOL regionMode); 
 void PHRunTask(void);                              // 开始执行任务
 void PHStopTask(void);                             // 停止执行
 BOOL PHIsRunning(void);                            // 是否正在执行
+
+#pragma mark - 识别引擎（PHVision.m）
+UIImage *PHCaptureScreen(void);                    // 截屏（跳过我方浮层）
+UIImage *PHCropRegionPts(UIImage *full, CGRect rPts);   // 按屏幕点坐标裁剪
+BOOL PHRecognizeAction(PHAction *a);               // 识别一条动作（识字/识色/识图），返回是否命中
+BOOL PHColorHitInImage(UIImage *img, NSArray<NSString *> *colors, double similarity,
+                       double *outDist, NSString **outHex);   // 识色核心判定（可单测）
+NSString *PHColorHexAtPoint(CGPoint p);            // 取屏幕上某点的颜色（十六进制）
+void PHShowTemplatePicker(NSInteger actionIndex);  // 相册选识图模板
+void PHShowColorPicker(NSInteger actionIndex);     // 点屏取色（识色用）
