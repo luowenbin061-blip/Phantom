@@ -766,6 +766,7 @@ void PHShowActionEdit(NSInteger index) {
 
 @implementation PHSettingsActions
 + (void)onTapTest  { PHTestSyntheticTap(); }
++ (void)onShowLog  { PHShowLogPanel(); }
 + (void)onLoop     { PHInputCard(@"整体执行次数", @"0 = 无限循环", [[NSUserDefaults standardUserDefaults] stringForKey:@"phantom_loop"] ?: @"1", ^(NSString *t) {
     [[NSUserDefaults standardUserDefaults] setObject:(t ?: @"1") forKey:@"phantom_loop"];
     PHShowSettings();
@@ -830,6 +831,8 @@ void PHShowSettings(void) {
     PHPanelSection(@"触摸引擎自检");
     PHPanelAdd(PHFieldRow(@"开始自检：3 种方式各点一次悬浮球", g_pW,
                           [PHSettingsActions class], @selector(onTapTest)), 0);
+    PHPanelAdd(PHFieldRow(@"查看日志（复制 / 排查用）", g_pW,
+                          [PHSettingsActions class], @selector(onShowLog)), 8);
     PHPanelNote(@"自检时请先别碰屏幕。球自己弹开 = 那种方式可用；三种都没反应就把日志发我。");
 
     PHPanelSection(@"整体执行设置");

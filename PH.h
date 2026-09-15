@@ -3,7 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
-#define PH_VERSION @"0.8"   // 幻影版本（触摸合成自检入口）
+#define PH_VERSION @"0.9"   // 幻影版本（自检+日志入口）
 
 #pragma mark - 主题
 #define PH_BG      [UIColor colorWithRed:0.173 green:0.173 blue:0.180 alpha:0.95]   // #2C2C2E 面板底
@@ -116,3 +116,4 @@ void PHCloseMenu(void);                         // 关主面板（自检前要�
 void PHTestSyntheticTap(void);                  // 触摸合成自检：3 种方式各点一次球，自动判结果
 BOOL PHIsMainMenuOpen(void);                    // 主面板是否打开（自检判定基准：只有主面板打开才算球被点开）
 void PHCloseAllPanels(void);                    // 关掉所有面板（自检前清场）
+void PHShowLogPanel(void);                      // 打开日志面板（复制日志/排查）

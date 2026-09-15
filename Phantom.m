@@ -461,7 +461,8 @@ void PHTestSyntheticTap(void) {
                     NSString *sum = [g_tapResults componentsJoinedByString:@"，"];
                     PLog(@"===== 触摸合成自检结果：%@（%ld/3 有效）=====", sum, (long)good);
                     PHToast(good ? [NSString stringWithFormat:@"可用：%@", sum]
-                                 : @"三种方式都没点开球 → 复制日志发我");
+                                 : @"三种方式都没点开球 → 日志已弹出，复制发我");
+                    PHShowLogPanel();   // 自检结束自动弹日志（结论在最后一行）
                 }
             });
         });
@@ -555,7 +556,7 @@ static UITextView *g_logView = nil;
 }
 @end
 
-static void PHShowLogPanel(void) {
+void PHShowLogPanel(void) {
     @try {
         if (g_logWin) {
             g_logView.text = [NSString stringWithContentsOfFile:g_logPath encoding:NSUTF8StringEncoding error:nil] ?: @"(空)";
