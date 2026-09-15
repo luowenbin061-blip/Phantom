@@ -562,6 +562,73 @@ void PHTestSyntheticTap(void) {
     }
 }
 
+#pragma mark - 悬浮球图标（相册选图）
+
+static id g_iconPickerDelegate = nil;
+
+@interface PHIconPickerDelegate : NSObject <UIImagePickerControllerDelegate, UINavigationControllerDelegate>
+@end
+
+@implementation PHIconPickerDelegate
+
+- (void)imagePickerController:(UIImagePickerController *)picker
+didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> *)info {
+    UIImage *img = info[UIImagePickerControllerEditedImage] ?: info[UIImagePickerControllerOriginalImage];
+    [picker dismissViewControllerAnimated:YES completion:^{
+        if (!img) return;
+        NSString *doc = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+        NSString *path = [doc stringByAppendingPathComponent:@"ball_icon.png"];
+        if ([UIImagePNGRepresentation(img) writeToFile:path atomically:YES]) {
+            [[NSUserDefaults standardUserDefaults] setObject:@"ball_icon.png" forKey:@"phantom_ball_icon"];
+            [[NSUserDefaults standardUserDefaults] synchronize];
+            PLog(@"ball icon saved: %@", path);
+            PHRefreshBall();
+            PHToast(@"悬浮球图标已更新");
+        } else {
+            PHToast(@"图标保存失败");
+        }
+    }];
+}
+
+- (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
+    [picker dismissViewControllerAnimated:YES completion:nil];
+}
+
+@end
+
+void PHShowIconPicker(void) {
+    UIWindowScene *scene = nil;
+    for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
+        if ([sc isKindOfClass:[UIWindowScene class]] &&
+            sc.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)sc; break; }
+    }
+    if (!scene) { PHToast(@"没有可用窗口"); return; }
+    UIWindow *host = scene.keyWindow;
+    if (!host) {
+        for (UIWindow *w in scene.windows) {
+            if (w != g_ballWin && w.rootViewController) { host = w; break; }
+        }
+    }
+    UIViewController *root = host.rootViewController;
+    if (!root) { PHToast(@"宿主窗口没有控制器，无法打开相册"); return; }
+    if (!g_iconPickerDelegate) g_iconPickerDelegate = [[PHIconPickerDelegate alloc] init];
+
+    UIImagePickerController *picker = [[UIImagePickerController alloc] init];
+    picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
+    picker.allowsEditing = YES;
+    picker.delegate = (PHIconPickerDelegate *)g_iconPickerDelegate;
+    [root presentViewController:picker animated:YES completion:nil];
+    PLog(@"icon picker presented on %@", NSStringFromClass([root class]));
+}
+
+void PHResetBallIcon(void) {
+    NSString *doc = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    [[NSFileManager defaultManager] removeItemAtPath:[doc stringByAppendingPathComponent:@"ball_icon.png"] error:nil];
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"phantom_ball_icon"];
+    PHRefreshBall();
+    PHToast(@"已恢复默认图标");
+}
+
 #pragma mark - 日志面板（长按球打开）
 
 static UIWindow *g_logWin = nil;
