@@ -58,7 +58,8 @@ static IOHIDEventSystemClientRef (*pCreateWithType)(CFAllocatorRef, int32_t, voi
 static void (*pDispatch)(IOHIDEventSystemClientRef, IOHIDEventRef);
 static void (*pSchedule)(IOHIDEventSystemClientRef, CFRunLoopRef, CFStringRef);
 // hand 包 finger 的写法需要这两个
-typedef IOHIDEventRef (*PFDigitizerEvent)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, uint32_t, uint32_t,
+// 15 个参数：allocator, ts, type, index, identity, eventMask, buttonMask, x, y, z, pressure, twist, range, touch, options
+typedef IOHIDEventRef (*PFDigitizerEvent)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
                                           double, double, double, double, double, Boolean, Boolean, uint32_t);
 static PFDigitizerEvent pDigitizerEvent = NULL;
 static void (*pAppendEvent)(IOHIDEventRef, IOHIDEventRef, uint32_t);
