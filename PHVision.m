@@ -5,6 +5,7 @@
 
 #import "PH.h"
 #import <Vision/Vision.h>
+#import <math.h>
 
 static NSString *phDocs(void) {
     return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
@@ -199,6 +200,24 @@ static UIImage *phLoadTemplate(NSString *name) {
     return [UIImage imageWithContentsOfFile:p];
 }
 
+// 两组图像特征的余弦相似度（Vision 的 computeDistance API 在 SDK 里可见性不稳，自己算更可靠）
+static double phFeatureCos(VNFeaturePrintObservation *a, VNFeaturePrintObservation *b) {
+    if (!a || !b) return -1.0;
+    NSData *da = a.data, *db = b.data;
+    if (!da || !db || da.length < 4 || da.length != db.length) return -1.0;
+    const float *fa = (const float *)da.bytes;
+    const float *fb = (const float *)db.bytes;
+    NSUInteger n = da.length / sizeof(float);
+    double dot = 0, na = 0, nb = 0;
+    for (NSUInteger i = 0; i < n; i++) {
+        dot += (double)fa[i] * (double)fb[i];
+        na  += (double)fa[i] * (double)fa[i];
+        nb  += (double)fb[i] * (double)fb[i];
+    }
+    if (na <= 0 || nb <= 0) return -1.0;
+    return dot / (sqrt(na) * sqrt(nb));
+}
+
 #pragma mark - 对外：识别一个动作
 
 BOOL PHRecognizeAction(PHAction *a) {
@@ -244,21 +263,16 @@ BOOL PHRecognizeAction(PHAction *a) {
         if (!a.imageList.count) { PHLogLine(@"  识图：还没选模板图，跳过"); return NO; }
         VNFeaturePrintObservation *cf = phFeature(crop);
         if (!cf) { PHLogLine(@"  识图：取特征失败"); return NO; }
-        double thr = (1.0 - a.similarity) * 2.0;      // 相似度 0.9 → 距离阈值 0.20
         for (NSString *name in a.imageList) {
             UIImage *tpl = phLoadTemplate(name);
             if (!tpl) { PHLogLine([NSString stringWithFormat:@"  识图：模板 %@ 找不到", name]); continue; }
             VNFeaturePrintObservation *tf = phFeature(tpl);
             if (!tf) continue;
-            double d = 0;
-            NSError *err = nil;
-            if ([cf computeDistance:&d toFeaturePrint:tf error:&err]) {
-                PHLogLine([NSString stringWithFormat:@"  识图 %@：距离 %.3f（阈值 %.2f）%@",
-                           name, d, thr, d <= thr ? @"→ 命中" : @""]);
-                if (d <= thr) return YES;
-            } else if (err) {
-                PHLogLine([NSString stringWithFormat:@"  识图比对出错：%@", err.localizedDescription]);
-            }
+            double cos = phFeatureCos(cf, tf);
+            if (cos < 0) { PHLogLine([NSString stringWithFormat:@"  识图 %@：特征不可比（长度不一致）", name]); continue; }
+            PHLogLine([NSString stringWithFormat:@"  识图 %@：相似度 %.3f（要求 %.2f）%@",
+                       name, cos, a.similarity, cos >= a.similarity ? @"→ 命中" : @""]);
+            if (cos >= a.similarity) return YES;
         }
         return NO;
     }
